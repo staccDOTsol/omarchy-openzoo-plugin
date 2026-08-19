@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "openzoo",
+  "name": "openzoo memory",
+  "version": "0.1.0",
+  "author": "stacc",
+  "license": "MIT",
+  "repository": "https://github.com/staccDOTsol/omarchy-openzoo-plugin",
+  "description": "Ask your own machine. Semantic recall over a holographically-bound corpus, answered by a leCore daemon running on localhost — no account, no network, nothing leaves the box unless you opt in.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "openzoo memory",
+    "description": "Semantic search over your bound corpus, local by default.",
+    "category": "Productivity",
+    "defaultSection": "right",
+    "allowMultiple": false,
+    "defaults": {
+      "endpoint": "http://127.0.0.1:8787",
+      "token": "hrr-lab-token",
+      "tenantId": "claude-code",
+      "contextId": "",
+      "topK": 8,
+      "hostedKey": ""
+    },
+    "schema": [
+      {
+        "key": "endpoint",
+        "type": "string",
+        "label": "leCore daemon",
+        "description": "Local holographic memory daemon. Default is loopback — nothing leaves this machine."
+      },
+      {
+        "key": "token",
+        "type": "string",
+        "label": "Daemon token",
+        "description": "Bearer token the local daemon expects."
+      },
+      {
+        "key": "tenantId",
+        "type": "string",
+        "label": "Tenant",
+        "description": "Namespace within the daemon."
+      },
+      {
+        "key": "contextId",
+        "type": "string",
+        "label": "Context id",
+        "description": "Which bound corpus to search (ctx_...). Required — the daemon has no list endpoint."
+      },
+      {
+        "key": "topK",
+        "type": "int",
+        "label": "Retrieval breadth",
+        "description": "Slices returned per query. Breadth is the real quality knob."
+      },
+      {
+        "key": "hostedKey",
+        "type": "string",
+        "label": "openzoo key (optional)",
+        "description": "LEAVE EMPTY FOR FULLY LOCAL. Setting an ozk_live_ key opts in to hosted models and cross-machine corpora, and sends queries off this machine."
+      }
+    ]
+  }
+}
