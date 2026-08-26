@@ -139,24 +139,27 @@ Item {
   function ask(question) {
     var q = String(question || "").trim()
     if (q.length === 0) return
-    if (!proxyUp) { root.askNotice = "proxy not running — start the agent"; return }
 
     root.asking = true
     root.answer = ""
     root.askNotice = ""
 
-    var body = JSON.stringify({
-      model: model,
-      messages: [{ role: "user", content: q }],
-      max_tokens: 800
-    })
-
-    // -m 90: generation is slower than recall, but a bar widget still must not
-    // wait forever. Anything past this is reported, not spun on.
+    // SHELL OUT TO `openzoo ask`, DO NOT POST TO THE PROXY.
+    //
+    // The first cut posted to :8402 and gated the box on `proxyUp`, which made
+    // the ask box dead whenever the agent was not already running — i.e. almost
+    // always, since the proxy lives INSIDE `openzoo claude` and dies with it.
+    // Reported as "ask box no worky when press", and it was correct.
+    //
+    // `openzoo ask` drives PayClient straight at the gateway and needs no local
+    // proxy at all, so the widget now works standalone. Answer on stdout,
+    // receipt on stderr, non-zero exit on failure.
+    //
+    // --model is passed explicitly because the CLI's own default is
+    // anthropic/claude-opus-5 — the most expensive row in the catalog, and a
+    // surprising thing for a bar widget to spend on unasked.
     askProc.command = ["sh", "-c",
-      "curl -s -m 90 -X POST " + shellQuote(proxy + "/v1/chat/completions")
-      + " -H 'content-type: application/json'"
-      + " -d " + shellQuote(body)]
+      "openzoo ask " + shellQuote(q) + " --model " + shellQuote(model) + " 2>&1"]
     askProc.running = true
   }
 
@@ -167,32 +170,25 @@ Item {
     stdout: StdioCollector { id: askOut; waitForEnd: true }
     onExited: function (code) {
       root.asking = false
-      var raw = String(askOut.text || "")
-      if (code !== 0 || raw.length === 0) {
-        root.askNotice = "no answer — proxy unreachable or timed out"
+      var raw = String(askOut.text || "").trim()
+      if (raw.length === 0) {
+        root.askNotice = code === 0 ? "empty answer" : "ask failed with no output"
         return
       }
-      try {
-        var j = JSON.parse(raw)
+      if (code !== 0) {
         // NAME THE PAYMENT FAILURE. An unfunded burner is the single most
-        // likely error on a fresh install, and "unparseable response" would
+        // likely error on a fresh install, and a raw x402 `accepts` dump would
         // send someone debugging the widget instead of funding the wallet.
-        if (j.error) {
-          var m = String(j.error.message || j.error)
-          root.askNotice = /402|payment|insufficient|fund/i.test(m)
-            ? "payment failed — fund the wallet below"
-            : m
-          return
-        }
-        var choice = (j.choices && j.choices[0]) || null
-        var text = choice && choice.message ? String(choice.message.content || "") : ""
-        if (text.length === 0) { root.askNotice = "empty answer"; return }
-        root.answer = text
-        // Spend just moved; show it immediately rather than at the next tick.
-        root.refresh()
-      } catch (e) {
-        root.askNotice = "unparseable response from proxy"
+        root.askNotice = /402|underfunded|payment|insufficient|fund/i.test(raw)
+          ? "payment failed — fund the wallet below"
+          // One line only: the panel is not a log viewer, and the CLI's first
+          // line is the one that names the fault.
+          : raw.split("\n")[0].substring(0, 200)
+        return
       }
+      root.answer = raw
+      // Spend just moved; show it immediately rather than at the next tick.
+      root.refresh()
     }
   }
 

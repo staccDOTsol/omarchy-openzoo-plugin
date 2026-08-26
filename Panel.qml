@@ -133,10 +133,10 @@ Panel {
           id: askInput
           width: parent.width
           foreground: root.foreground
-          placeholderText: zoo.asking
-                           ? "asking…"
-                           : (zoo.proxyUp ? "ask openzoo…" : "start the agent first")
-          enabled: zoo.proxyUp && !zoo.asking
+          // NOT gated on zoo.proxyUp: `openzoo ask` talks to the gateway
+          // directly, so the box works whether or not the agent is running.
+          placeholderText: zoo.asking ? "asking…" : "ask openzoo…"
+          enabled: !zoo.asking
           font.family: root.fontFamily
           onAccepted: zoo.ask(text)
         }
