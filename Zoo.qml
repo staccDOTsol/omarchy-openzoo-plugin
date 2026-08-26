@@ -51,12 +51,15 @@ Item {
   // What the bar itself shows. Short by necessity — this competes for space
   // with every other module — so: spend, then the one number that is the
   // actual product (what the same calls would have cost direct).
+  // THE BAR IS THE SCARCEST SPACE ON THE SCREEN. "$14.6657  0.66x" plus a glyph
+  // ran into the tray icons and got clipped, which is worse than showing less.
+  // 4dp only matters while spend is fractions of a cent; past a dollar the
+  // extra digits are noise. The multiple lives in the tooltip and the panel,
+  // both one hover or click away.
   function barText() {
-    if (!checked) return "openzoo …"
-    if (!proxyUp) return "openzoo off"
-    var s = "$" + spendUsd.toFixed(4)
-    if (savingX !== null && savingX > 0) s += "  " + savingX.toFixed(2) + "x"
-    return s
+    if (!checked) return "…"
+    if (!proxyUp) return "off"
+    return spendUsd >= 1 ? "$" + spendUsd.toFixed(2) : "$" + spendUsd.toFixed(4)
   }
 
   function statusLine() {
