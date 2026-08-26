@@ -80,16 +80,29 @@ Panel {
   }
 
   // ---- bar item ------------------------------------------------------------
-  BarIconButton {
+  //
+  // WidgetButton, NOT BarIconButton. BarIconButton is built for exactly one
+  // glyph: `labelVisible: false`, `fixedWidth: slotSize`, and the text routed
+  // through OpticalGlyph into a fixed square canvas. A string like "$15.02"
+  // therefore overflowed its slot and the tray icon next to it painted straight
+  // over the top. WidgetButton is what the clock's own bar label uses —
+  // labelVisible defaults true and fixedWidth is -1, so it sizes to its text.
+  //
+  // THE BAR SHOWS SPEND, NOT A GLYPH. That is the whole point of the widget:
+  // spend used to be visible only inside a terminal. The leCore daemon is an
+  // optional extra and deliberately NOT what the bar reports — a missing
+  // optional daemon is a disabled feature, not an emergency.
+  WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // THE BAR SHOWS SPEND, NOT A GLYPH. The whole complaint this answers is
-    // that spend was only visible inside a terminal. The leCore daemon is an
-    // optional extra and is deliberately NOT what the bar reports — a missing
-    // optional daemon is a disabled feature, not an emergency, so it must not
-    // be allowed to make the bar look broken.
-    text: root.iconGlyph + "  " + zoo.barText()
+    text: zoo.barText()
+    // Same knobs the clock's own bar label sets, so this pads and sizes like a
+    // first-party module instead of a foreign one wedged between them.
+    labelVisible: true
+    hasVisualContent: text !== ""
+    horizontalMargin: 8.75
+    verticalPadding: 8.75
     tooltipText: zoo.proxyUp
                  ? zoo.statusLine()
                  : "openzoo — proxy not running (start the agent)"
