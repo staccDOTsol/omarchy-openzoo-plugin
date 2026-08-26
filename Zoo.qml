@@ -120,7 +120,7 @@ Item {
   // wrong one. Fails silently — a missing address is not worth a broken bar.
   function loadWallet() {
     walletProc.command = ["sh", "-c",
-      "openzoo address 2>/dev/null | grep -oE '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1"]
+      ozPath() + "openzoo address 2>/dev/null | grep -oE '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1"]
     walletProc.running = true
   }
 
@@ -159,8 +159,22 @@ Item {
     // anthropic/claude-opus-5 — the most expensive row in the catalog, and a
     // surprising thing for a bar widget to spend on unasked.
     askProc.command = ["sh", "-c",
-      "openzoo ask " + shellQuote(q) + " --model " + shellQuote(model) + " 2>&1"]
+      ozPath() + "openzoo ask " + shellQuote(q) + " --model " + shellQuote(model) + " 2>&1"]
     askProc.running = true
+  }
+
+  // PATH FIX, AND IT IS THE WHOLE REASON THE BOX DID NOTHING.
+  //
+  // quickshell is started by uwsm/systemd, which does NOT source ~/.bashrc, and
+  // `openzoo` is a MISE SHIM rather than a binary in /usr/bin. So every Process
+  // here inherited a PATH with no shim dir on it and got "command not found" —
+  // the same trap that made omarchy-launch-floating-terminal-with-presentation
+  // fail on the menu entries.
+  //
+  // Prepending is safe: a real openzoo earlier on PATH still wins, because the
+  // shim dirs are appended after $PATH is expanded, not before it.
+  function ozPath() {
+    return 'PATH="$PATH:$HOME/.local/share/mise/shims:$HOME/.local/bin:$HOME/.local/state/mise/shims" '
   }
 
   Process {
@@ -176,6 +190,13 @@ Item {
         return
       }
       if (code !== 0) {
+        // 127 is "command not found", which under a systemd-launched shell means
+        // the mise shim dir is missing from PATH. Say that, rather than showing
+        // a bare `sh: openzoo: not found` that reads as a broken widget.
+        if (code === 127 || /not found/i.test(raw)) {
+          root.askNotice = "openzoo CLI not on PATH — try: mise use -g npm:openzoo@latest"
+          return
+        }
         // NAME THE PAYMENT FAILURE. An unfunded burner is the single most
         // likely error on a fresh install, and a raw x402 `accepts` dump would
         // send someone debugging the widget instead of funding the wallet.
