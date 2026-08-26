@@ -200,9 +200,20 @@ Panel {
           TapHandler { onTapped: zoo.copyText(zoo.wallet) }
         }
 
-        // ---- privacy / status header (leCore memory, optional) ----
+        // ---- leCore memory: HIDDEN unless a daemon is actually there --------
+        //
+        // This section used to render "leCore daemon not found at 127.0.0.1:8787"
+        // to everyone, because the daemon is a separate service that the openzoo
+        // npm package does not install — so nobody who follows the install
+        // instructions has one. A permanent error message for a feature the user
+        // never asked for reads as a broken widget.
+        //
+        // Binding is NOT affected and never was: `openzoo bind` posts to the
+        // GATEWAY (/v1/hrr/bind, free), not to this daemon. Only this panel's
+        // local search needs it, which is why hiding it costs nothing.
         Row {
           width: parent.width
+          visible: svc.daemonUp
           spacing: Style.space(8)
 
           Text {
@@ -225,8 +236,9 @@ Panel {
         TextField {
           id: input
           width: parent.width
+          visible: svc.daemonUp
           foreground: root.foreground
-          placeholderText: svc.daemonUp ? "search your bound corpus…" : "leCore daemon not running"
+          placeholderText: "search your bound corpus…"
           enabled: svc.daemonUp && svc.configured
           font.family: root.fontFamily
           // Search on Enter rather than per-keystroke: recall is a real query
@@ -234,10 +246,10 @@ Panel {
           onAccepted: svc.search(text)
         }
 
-        // ---- empty / daemon-down guidance ----
+        // ---- empty-state guidance (only reachable WITH a daemon now) ----
         Text {
           width: parent.width
-          visible: !svc.daemonUp && svc.checked
+          visible: false
           wrapMode: Text.WordWrap
           color: root.dim
           font.family: root.fontFamily
@@ -250,6 +262,7 @@ Panel {
         ListView {
           id: resultList
           width: parent.width
+          visible: svc.daemonUp
           height: Math.min(contentHeight, Style.space(420))
           clip: true
           interactive: contentHeight > height
