@@ -6,7 +6,7 @@
   "author": "stacc",
   "license": "MIT",
   "repository": "https://github.com/staccDOTsol/omarchy-openzoo-plugin",
-  "description": "Ask your own machine. Semantic recall over a holographically-bound corpus, answered by a leCore daemon running on localhost — no account, no network, nothing leaves the box unless you opt in.",
+  "description": "Live openzoo spend on the bar, and a question box that answers without a terminal — paid per call by x402 from a local burner wallet, no account and no API key. Optionally also does semantic recall over a holographically-bound corpus when a leCore daemon is running.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,12 +14,14 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "openzoo memory",
-    "description": "Semantic search over your bound corpus, local by default.",
+    "displayName": "openzoo",
+    "description": "Live spend and a question box, plus optional local corpus search.",
     "category": "Productivity",
     "defaultSection": "right",
     "allowMultiple": false,
     "defaults": {
+      "proxy": "http://localhost:8402",
+      "model": "deepseek/deepseek-v4-pro-0813",
       "endpoint": "http://127.0.0.1:8787",
       "token": "hrr-lab-token",
       "tenantId": "claude-code",
@@ -28,6 +30,18 @@
       "hostedKey": ""
     },
     "schema": [
+      {
+        "key": "proxy",
+        "type": "string",
+        "label": "openzoo proxy",
+        "description": "Local x402-paying proxy, started by `openzoo claude`. Localhost is keyless by design, so there is no token here."
+      },
+      {
+        "key": "model",
+        "type": "string",
+        "label": "Ask model",
+        "description": "Which model answers the question box. Any id from GET /v1/models."
+      },
       {
         "key": "endpoint",
         "type": "string",

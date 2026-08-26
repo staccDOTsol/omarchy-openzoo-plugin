@@ -45,6 +45,8 @@ Panel {
   readonly property string cfgContext: setting("contextId", "")
   readonly property int cfgTopK: setting("topK", 8)
   readonly property string cfgHostedKey: setting("hostedKey", "")
+  readonly property string cfgProxy: setting("proxy", "http://localhost:8402")
+  readonly property string cfgModel: setting("model", "deepseek/deepseek-v4-pro-0813")
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -59,15 +61,30 @@ Panel {
     hostedKey: root.cfgHostedKey
   }
 
+  // The openzoo proxy, which — unlike the leCore daemon above — is running on
+  // any machine where the agent is, because `openzoo claude` starts it. This is
+  // what makes the widget useful on a fresh install instead of opening onto
+  // "daemon not reachable".
+  Zoo {
+    id: zoo
+    proxy: root.cfgProxy
+    model: root.cfgModel
+  }
+
   // ---- bar item ------------------------------------------------------------
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // Not shouting when the daemon is down — a missing optional daemon is not
-    // an emergency, it is a disabled feature.
-    text: svc.daemonUp ? root.iconGlyph : root.glyphWarn
-    tooltipText: svc.daemonUp ? "openzoo memory" : "leCore daemon not running"
+    // THE BAR SHOWS SPEND, NOT A GLYPH. The whole complaint this answers is
+    // that spend was only visible inside a terminal. The leCore daemon is an
+    // optional extra and is deliberately NOT what the bar reports — a missing
+    // optional daemon is a disabled feature, not an emergency, so it must not
+    // be allowed to make the bar look broken.
+    text: root.iconGlyph + "  " + zoo.barText()
+    tooltipText: zoo.proxyUp
+                 ? zoo.statusLine()
+                 : "openzoo — proxy not running (start the agent)"
     onPressed: function(b) { root.opened ? root.close() : root.open() }
   }
 
@@ -99,7 +116,79 @@ Panel {
         anchors.top: parent.top
         spacing: Style.space(12)
 
-        // ---- privacy / status header ----
+        // ---- SPEND: what this session has cost, and the counterfactual ----
+        // First thing in the panel because it is the thing you open the panel
+        // for. `savedUsd`/`savingX` are the product; spend alone is just a bill.
+        Text {
+          width: parent.width
+          text: zoo.statusLine()
+          color: zoo.proxyUp ? root.foreground : Color.urgent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          elide: Text.ElideRight
+        }
+
+        // ---- ASK: a question answered here, with no terminal ----
+        TextField {
+          id: askInput
+          width: parent.width
+          foreground: root.foreground
+          placeholderText: zoo.asking
+                           ? "asking…"
+                           : (zoo.proxyUp ? "ask openzoo…" : "start the agent first")
+          enabled: zoo.proxyUp && !zoo.asking
+          font.family: root.fontFamily
+          onAccepted: zoo.ask(text)
+        }
+
+        Text {
+          width: parent.width
+          visible: zoo.askNotice.length > 0
+          wrapMode: Text.WordWrap
+          text: zoo.askNotice
+          color: Color.urgent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        Rectangle {
+          width: parent.width
+          visible: zoo.answer.length > 0
+          implicitHeight: answerText.implicitHeight + Style.space(16)
+          radius: Style.space(8)
+          color: Style.hoverFill
+
+          TapHandler { onTapped: zoo.copyText(zoo.answer) }
+
+          Text {
+            id: answerText
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Style.space(8)
+            wrapMode: Text.WordWrap
+            text: zoo.answer
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+
+        // ---- WALLET: the address to fund, because an empty burner is the
+        // single most likely reason an ask just failed. Click copies it.
+        Text {
+          width: parent.width
+          visible: zoo.wallet.length > 0
+          text: "wallet  " + zoo.wallet
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideMiddle
+
+          TapHandler { onTapped: zoo.copyText(zoo.wallet) }
+        }
+
+        // ---- privacy / status header (leCore memory, optional) ----
         Row {
           width: parent.width
           spacing: Style.space(8)
