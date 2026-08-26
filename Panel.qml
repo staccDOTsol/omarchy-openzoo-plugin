@@ -26,7 +26,15 @@ Panel {
   id: root
   moduleName: "openzoo"
   ipcTarget: "openzoo"
-  manageIpc: false
+  // manageIpc TRUE so the base Panel builds the IpcHandler that gives us
+  // open/close/toggle — which is what a keybinding drives:
+  //   omarchy-shell shell toggle openzoo
+  //
+  // This was false, copied from plugins/panels/monitor. But monitor sets it
+  // false precisely BECAUSE it declares its own IpcHandler for brightness, and
+  // a target may only have one. This panel declares none, so false meant no IPC
+  // existed at all and the panel could only ever be opened by clicking the bar.
+  manageIpc: true
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -98,7 +106,11 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: input
+    // askInput, NOT the leCore search field below it. Opening the panel used to
+    // land the cursor in a field that is DISABLED whenever no leCore daemon is
+    // running — so the panel looked broken on every machine without one, which
+    // is most of them. The ask box always works; focus what always works.
+    focusTarget: askInput
     contentWidth: panel.fittedContentWidth(Style.space(520))
     contentHeight: panel.fittedContentHeight(column.implicitHeight)
 
