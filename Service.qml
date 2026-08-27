@@ -46,6 +46,15 @@ Item {
   readonly property bool localOnly: hostedKey.trim().length === 0
   readonly property bool configured: contextId.trim().length > 0
 
+  // ---- response bounds -----------------------------------------------------
+  // Every one of these is enforced at the PRODUCER (curl | head -c) or before
+  // the parse, never after, because StdioCollector buffers into the shared
+  // Quickshell process. 256KB comfortably holds 256 slices of real corpus text;
+  // anything past it is a misbehaving endpoint, not a big answer.
+  readonly property int maxResponseBytes: 262144
+  readonly property int maxItems: 256
+  readonly property int maxFieldChars: 4096
+
   // Human-readable one-liner for the panel header. Deliberately states the
   // privacy posture rather than burying it in a settings screen.
   function statusLine() {
@@ -107,11 +116,25 @@ Item {
     })
 
     // -m 15: a launcher must never hang the bar waiting on a slow recall.
+    //
+    // `| head -c` IS THE PRODUCER-SIDE BYTE CAP, and it has to be here rather
+    // than a length check after the fact: StdioCollector buffers the WHOLE
+    // stream in the shared, long-lived Quickshell process, so by the time QML
+    // could measure it the damage is done. A configured endpoint (this is a
+    // user-editable setting, and `hostedKey` mode points it off-machine) could
+    // otherwise stall or exhaust the shell that also draws the bar, the
+    // launcher and the notifications. Reported by the Omarchy marketplace
+    // review as UNBOUNDED-REMOTE-RESPONSE-IN-SHELL.
+    //
+    // Asking for CAP+1 is deliberate: a body that arrives at exactly the cap
+    // is indistinguishable from one that was cut, so the extra byte is how
+    // truncation is DETECTED and the parse refused instead of fed a half JSON.
     recallProc.command = ["sh", "-c",
       "curl -s -m 15 -X POST " + shellQuote(endpoint + "/internal/v1/hrr/recall")
       + " -H " + shellQuote("Authorization: Bearer " + token)
       + " -H 'content-type: application/json'"
-      + " -d " + shellQuote(body)]
+      + " -d " + shellQuote(body)
+      + " | head -c " + (maxResponseBytes + 1)]
     recallProc.running = true
   }
 
@@ -129,15 +152,31 @@ Item {
         root.daemonUp = false
         return
       }
+      // REFUSE A CAPPED BODY, never parse it. We asked for CAP+1 bytes, so
+      // anything at or past the cap was cut mid-stream: the JSON is invalid by
+      // construction and an endpoint that produces one is misbehaving. Say so
+      // plainly rather than showing "unparseable response", which reads as our
+      // bug and hides a remote one.
+      if (raw.length > maxResponseBytes) {
+        root.results = []
+        root.notice = "response too large (over " + Math.round(maxResponseBytes / 1024) + "KB) — refused"
+        return
+      }
       try {
         var parsed = JSON.parse(raw)
         var items = parsed.items || []
         var out = []
-        for (var i = 0; i < items.length; i++) {
+        // Bound the ITEM COUNT independently of top_k: top_k is what we asked
+        // for, not what a remote is obliged to return.
+        var lim = Math.min(items.length, maxItems)
+        for (var i = 0; i < lim; i++) {
           var it = items[i]
           out.push({
-            id: String(it.id || i),
-            text: String(it.text || ""),
+            id: String(it.id || i).substring(0, maxFieldChars),
+            // Bound each FIELD too: one item carrying a megabyte of text is
+            // the same denial-of-service as a thousand small ones, and the
+            // panel only ever renders the first 280 characters anyway.
+            text: String(it.text || "").substring(0, maxFieldChars),
             score: Number(it.score || 0),
             // Kept whole rather than flattened: metadata carries the source
             // stamp the corpus was bound with, and different binders use

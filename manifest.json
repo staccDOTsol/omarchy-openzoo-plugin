@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "openzoo",
   "name": "openzoo",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "stacc",
   "license": "MIT",
   "repository": "https://github.com/staccDOTsol/omarchy-openzoo-plugin",

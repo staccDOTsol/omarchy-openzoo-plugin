@@ -31,6 +31,16 @@ Item {
   property string proxy: "http://localhost:8402"
   property string model: "deepseek/deepseek-v4-pro-0813"
 
+  // ---- response bounds -----------------------------------------------------
+  // SAME CLASS AS THE RECALL PATH the marketplace review flagged
+  // (UNBOUNDED-REMOTE-RESPONSE-IN-SHELL): every Process below collects into a
+  // StdioCollector inside the shared, long-lived Quickshell process, and
+  // `proxy` is a user-editable setting. The reviewer only saw Service.qml, but
+  // an unbounded answer here stalls the same bar. Capped at the PRODUCER.
+  readonly property int maxInfoBytes: 65536
+  readonly property int maxAnswerBytes: 262144
+  readonly property int maxWalletBytes: 256
+
   // ---- state ---------------------------------------------------------------
   property bool proxyUp: false
   property bool checked: false
@@ -78,7 +88,8 @@ Item {
   // ---- live info -----------------------------------------------------------
   function refresh() {
     infoProc.command = ["sh", "-c",
-      "curl -s -m 3 " + shellQuote(proxy + "/v1/info")]
+      "curl -s -m 3 " + shellQuote(proxy + "/v1/info")
+      + " | head -c " + (maxInfoBytes + 1)]
     infoProc.running = true
   }
 
@@ -91,6 +102,8 @@ Item {
       root.checked = true
       var raw = String(infoOut.text || "")
       if (code !== 0 || raw.length === 0) { root.proxyUp = false; return }
+      // A capped /v1/info is a misbehaving endpoint, not a live proxy.
+      if (raw.length > maxInfoBytes) { root.proxyUp = false; return }
       try {
         var j = JSON.parse(raw)
         root.proxyUp = true
@@ -123,7 +136,10 @@ Item {
   // wrong one. Fails silently — a missing address is not worth a broken bar.
   function loadWallet() {
     walletProc.command = ["sh", "-c",
-      ozPath() + "openzoo address 2>/dev/null | grep -oE '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1"]
+      ozPath() + "openzoo address 2>/dev/null | grep -oE '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1"
+      // head -1 bounds LINES, not bytes: one unterminated line is still
+      // unbounded. head -c is the byte cap.
+      + " | head -c " + (maxWalletBytes + 1)]
     walletProc.running = true
   }
 
@@ -132,7 +148,11 @@ Item {
     running: false
     command: []
     stdout: StdioCollector { id: walletOut; waitForEnd: true }
-    onExited: function () { root.wallet = String(walletOut.text || "").trim() }
+    onExited: function () {
+      var w = String(walletOut.text || "").trim()
+      // An address is ~44 chars; anything near the cap is not one.
+      root.wallet = w.length > maxWalletBytes ? "" : w
+    }
   }
 
   // ---- ask -----------------------------------------------------------------
@@ -162,7 +182,8 @@ Item {
     // anthropic/claude-opus-5 — the most expensive row in the catalog, and a
     // surprising thing for a bar widget to spend on unasked.
     askProc.command = ["sh", "-c",
-      ozPath() + "openzoo ask " + shellQuote(q) + " --model " + shellQuote(model) + " 2>&1"]
+      ozPath() + "openzoo ask " + shellQuote(q) + " --model " + shellQuote(model) + " 2>&1"
+      + " | head -c " + (maxAnswerBytes + 1)]
     askProc.running = true
   }
 
@@ -188,6 +209,10 @@ Item {
     onExited: function (code) {
       root.asking = false
       var raw = String(askOut.text || "").trim()
+      if (raw.length > maxAnswerBytes) {
+        root.askNotice = "answer too large (over " + Math.round(maxAnswerBytes / 1024) + "KB) — refused"
+        return
+      }
       if (raw.length === 0) {
         root.askNotice = code === 0 ? "empty answer" : "ask failed with no output"
         return
