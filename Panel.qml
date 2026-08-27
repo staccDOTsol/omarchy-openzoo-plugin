@@ -169,7 +169,7 @@ Panel {
         Text {
           width: parent.width
           visible: zoo.askNotice.length > 0
-          wrapMode: Text.WordWrap
+          wrapMode: Text.Wrap
           text: zoo.askNotice
           color: Color.urgent
           font.family: root.fontFamily
@@ -191,7 +191,12 @@ Panel {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.margins: Style.space(8)
-            wrapMode: Text.WordWrap
+            // Text.Wrap, NOT WordWrap: an answer carries a receipt line with an
+            // 88-character base58 tx signature and no spaces in it. WordWrap
+            // only breaks at word boundaries, so that one token ran straight
+            // out of the panel and over the desktop. Text.Wrap prefers word
+            // boundaries and breaks anywhere when a single token cannot fit.
+            wrapMode: Text.Wrap
             text: zoo.answer
             color: root.foreground
             font.family: root.fontFamily
@@ -263,7 +268,7 @@ Panel {
         Text {
           width: parent.width
           visible: false
-          wrapMode: Text.WordWrap
+          wrapMode: Text.Wrap
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -304,7 +309,7 @@ Panel {
                 text: modelData.text.length > 280
                       ? modelData.text.substring(0, 280) + "…"
                       : modelData.text
-                wrapMode: Text.WordWrap
+                wrapMode: Text.Wrap
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall

@@ -31,6 +31,15 @@ Item {
   property string proxy: "http://localhost:8402"
   property string model: "deepseek/deepseek-v4-pro-0813"
 
+  // Deliberately short: it is prepended to every ask and the caller pays for
+  // its tokens. Names the surface, the desktop, and the payment model, because
+  // those three facts are what a bare question is missing.
+  property string systemPrompt: "You are answering from a bar widget on Omarchy, "
+    + "the Linux desktop by DHH (Arch + Hyprland, opinionated defaults). "
+    + "The user is running it right now. You are served by openzoo, which pays "
+    + "per call with x402 from a local burner wallet - no account, no API key. "
+    + "Answer briefly and concretely; this is a small panel, not a terminal."
+
   // ---- response bounds -----------------------------------------------------
   // SAME CLASS AS THE RECALL PATH the marketplace review flagged
   // (UNBOUNDED-REMOTE-RESPONSE-IN-SHELL): every Process below collects into a
@@ -182,7 +191,16 @@ Item {
     // anthropic/claude-opus-5 — the most expensive row in the catalog, and a
     // surprising thing for a bar widget to spend on unasked.
     askProc.command = ["sh", "-c",
-      ozPath() + "openzoo ask " + shellQuote(q) + " --model " + shellQuote(model) + " 2>&1"
+      ozPath() + "openzoo ask " + shellQuote(q)
+      + " --model " + shellQuote(model)
+      // TELL THE MODEL WHERE IT IS. `openzoo ask` bypasses the local proxy, so
+      // nothing injects a brief and the model receives the user's words alone.
+      // MEASURED from this very box: "do you even love omarchy thru this
+      // uiux?!?" came back "I think you mean *anarchy*?" — deepseek had no way
+      // to know omarchy was a real thing, let alone the desktop it was running
+      // on. One sentence of context is the whole difference.
+      + " --system " + shellQuote(systemPrompt)
+      + " 2>&1"
       + " | head -c " + (maxAnswerBytes + 1)]
     askProc.running = true
   }
