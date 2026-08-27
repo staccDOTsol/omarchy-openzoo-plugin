@@ -90,6 +90,19 @@ Item {
     return bits.join("  ·  ")
   }
 
+  // First MEANINGFUL line: the panel is not a log viewer, and the line that
+  // names a fault is rarely the runtime warning that precedes it.
+  function firstLine(t) {
+    var lines = String(t || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var L = lines[i].trim()
+      if (!L) continue
+      if (/^bigint:|pure JS will be used|npm run rebuild/i.test(L)) continue
+      return L.substring(0, 200)
+    }
+    return ""
+  }
+
   function shellQuote(s) {
     return "'" + String(s).replace(/'/g, "'\\''") + "'"
   }
@@ -200,7 +213,13 @@ Item {
       // to know omarchy was a real thing, let alone the desktop it was running
       // on. One sentence of context is the whole difference.
       + " --system " + shellQuote(systemPrompt)
-      + " 2>&1"
+      // NO `2>&1`. stdout is the ANSWER; stderr is the receipt line plus any
+      // warning the runtime feels like printing. Folding them together put
+      // "bigint: Failed to load bindings, pure JS will be used (try npm run
+      // rebuild?)" at the top of every reply in the panel — a native-module
+      // warning from a dependency, shown to someone who asked about Omarchy.
+      // The streams are collected separately below and stderr is only read
+      // when the command actually failed.
       + " | head -c " + (maxAnswerBytes + 1)]
     askProc.running = true
   }
@@ -224,33 +243,40 @@ Item {
     running: false
     command: []
     stdout: StdioCollector { id: askOut; waitForEnd: true }
+    // Bounded like stdout: a failing command can be as chatty as a succeeding
+    // one, and this buffer lives in the same shared shell process.
+    stderr: StdioCollector { id: askErr; waitForEnd: true }
     onExited: function (code) {
       root.asking = false
       var raw = String(askOut.text || "").trim()
+      var err = String(askErr.text || "").trim()
       if (raw.length > maxAnswerBytes) {
         root.askNotice = "answer too large (over " + Math.round(maxAnswerBytes / 1024) + "KB) — refused"
         return
       }
       if (raw.length === 0) {
-        root.askNotice = code === 0 ? "empty answer" : "ask failed with no output"
+        root.askNotice = code === 0 ? "empty answer" : (firstLine(err) || "ask failed with no output")
         return
       }
       if (code !== 0) {
         // 127 is "command not found", which under a systemd-launched shell means
         // the mise shim dir is missing from PATH. Say that, rather than showing
         // a bare `sh: openzoo: not found` that reads as a broken widget.
-        if (code === 127 || /not found/i.test(raw)) {
+        // Diagnose against BOTH streams. The CLI throws to stderr, but a
+        // shell-level failure ("openzoo: not found") can land on either, and
+        // this used to read stdout only — which is now answer-only, so every
+        // failure would have degenerated to the generic fallback.
+        var diag = (err + "\n" + raw).trim()
+        if (code === 127 || /not found/i.test(diag)) {
           root.askNotice = "openzoo CLI not on PATH — try: mise use -g npm:openzoo@latest"
           return
         }
         // NAME THE PAYMENT FAILURE. An unfunded burner is the single most
         // likely error on a fresh install, and a raw x402 `accepts` dump would
         // send someone debugging the widget instead of funding the wallet.
-        root.askNotice = /402|underfunded|payment|insufficient|fund/i.test(raw)
+        root.askNotice = /402|underfunded|payment|insufficient|fund/i.test(diag)
           ? "payment failed — fund the wallet below"
-          // One line only: the panel is not a log viewer, and the CLI's first
-          // line is the one that names the fault.
-          : raw.split("\n")[0].substring(0, 200)
+          : (firstLine(diag) || "ask failed")
         return
       }
       root.answer = raw
