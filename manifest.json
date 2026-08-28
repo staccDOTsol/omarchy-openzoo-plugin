@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "openzoo",
   "name": "openzoo",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "author": "stacc",
   "license": "MIT",
   "repository": "https://github.com/staccDOTsol/omarchy-openzoo-plugin",
-  "description": "Live openzoo spend on the bar, and a question box that answers without a terminal \u2014 paid per call by x402 from a local burner wallet, no account and no API key. Optionally also does semantic recall over a holographically-bound corpus when a leCore daemon is running.",
+  "description": "Ask 480+ models from the Omarchy bar with no account, no API key and no subscription. Every call is priced before it runs and paid per request from a local burner wallet over x402, so there is nothing to sign up for and nothing to cancel. Shows live spend, and does semantic recall over your own holographically-bound corpus when a leCore daemon is running.",
   "kinds": [
     "bar-widget"
   ],
@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "openzoo",
-    "description": "Live spend and a question box, plus optional local corpus search.",
+    "description": "Ask any model, no account and no API key. Pays per call from a local wallet, shows live spend, and searches your own bound corpus.",
     "category": "Productivity",
     "defaultSection": "center",
     "allowMultiple": false,
@@ -46,7 +46,7 @@
         "key": "endpoint",
         "type": "string",
         "label": "leCore daemon",
-        "description": "Local holographic memory daemon. Default is loopback \u2014 nothing leaves this machine."
+        "description": "Local holographic memory daemon. Default is loopback — nothing leaves this machine."
       },
       {
         "key": "token",
@@ -64,7 +64,7 @@
         "key": "contextId",
         "type": "string",
         "label": "Context id",
-        "description": "Which bound corpus to search (ctx_...). Required \u2014 the daemon has no list endpoint."
+        "description": "Which bound corpus to search (ctx_...). Required — the daemon has no list endpoint."
       },
       {
         "key": "topK",

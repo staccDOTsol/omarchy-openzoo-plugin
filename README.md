@@ -1,10 +1,16 @@
-# openzoo memory — Omarchy bar widget
+# openzoo — Omarchy bar widget
 
-Ask your own machine. Type a fragment of something you half-remember and get
-the actual slice back, searched semantically across a corpus far larger than
-any context window.
+Ask 480+ models from the bar. No account, no API key, no subscription.
 
-**Local by default. Nothing leaves your machine.**
+Every call is priced before it runs and paid per request from a local burner
+wallet over x402, so there is nothing to sign up for and nothing to cancel. The
+widget shows what you have actually spent, live.
+
+It also searches your own corpus: type a fragment of something you half-remember
+and get the actual slice back, matched semantically across far more text than
+fits in any context window.
+
+**Local by default. Nothing leaves your machine unless you set a hosted key.**
 
 ## Install
 
