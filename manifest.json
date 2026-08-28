@@ -6,7 +6,7 @@
   "author": "stacc",
   "license": "MIT",
   "repository": "https://github.com/staccDOTsol/omarchy-openzoo-plugin",
-  "description": "Ask 480+ models from the Omarchy bar with no account, no API key and no subscription. Every call is priced before it runs and paid per request from a local burner wallet over x402, so there is nothing to sign up for and nothing to cancel. Shows live spend, and does semantic recall over your own holographically-bound corpus when a leCore daemon is running.",
+  "description": "Ask 400+ models from the Omarchy bar with no account, no API key and no subscription. Every call is priced before it runs and paid per request from a local burner wallet over x402, so there is nothing to sign up for and nothing to cancel. Shows live spend, and does semantic recall over your own holographically-bound corpus when a leCore daemon is running.",
   "kinds": [
     "bar-widget"
   ],

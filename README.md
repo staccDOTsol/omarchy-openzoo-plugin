@@ -1,6 +1,6 @@
 # openzoo — Omarchy bar widget
 
-Ask 480+ models from the bar. No account, no API key, no subscription.
+Ask 400+ models from the bar. No account, no API key, no subscription.
 
 Every call is priced before it runs and paid per request from a local burner
 wallet over x402, so there is nothing to sign up for and nothing to cancel. The
