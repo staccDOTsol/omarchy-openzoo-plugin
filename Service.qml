@@ -44,7 +44,77 @@ Item {
   property string lastQuery: ""
 
   readonly property bool localOnly: hostedKey.trim().length === 0
-  readonly property bool configured: contextId.trim().length > 0
+
+  // ---- ingest (openzoo-ingest, a separate local service) -------------------
+  // status.json is written by every ingest run. When it exists, recall fans
+  // out across every source context it lists via the ingester's own `recall`,
+  // so no context id has to be pasted into settings.
+  readonly property string ingestBin: Quickshell.env("HOME") + "/.local/bin/openzoo-ingest"
+  readonly property string ingestStatusPath: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/openzoo-ingest/status.json"
+  property var ingest: null
+  readonly property bool ingestAvailable: ingest !== null && ingest.contexts && Object.keys(ingest.contexts).length > 0
+  readonly property bool configured: contextId.trim().length > 0 || ingestAvailable
+
+  function readIngest() {
+    ingestProc.command = ["sh", "-c", "cat " + shellQuote(ingestStatusPath) + " 2>/dev/null | head -c 65536"]
+    ingestProc.running = true
+  }
+
+  Process {
+    id: ingestProc
+    running: false
+    command: []
+    stdout: StdioCollector { id: ingestOut; waitForEnd: true }
+    onExited: function (code) {
+      var raw = String(ingestOut.text || "")
+      if (raw.length === 0) { root.ingest = null; return }
+      try { root.ingest = JSON.parse(raw) } catch (e) { root.ingest = null }
+    }
+  }
+
+  // One line for the panel: what has been bound, and how fresh it is.
+  function ingestLine() {
+    if (!ingest) return ""
+    var t = ingest.total || {}
+    var age = Math.max(0, Math.round(Date.now() / 1000 - Number(ingest.at || 0)))
+    var ago = age < 90 ? age + "s" : Math.round(age / 60) + "m"
+    var mb = (Number(t.chars || 0) / 1e6).toFixed(1)
+    return (ingest.ok ? "● " : "✗ ") + Number(t.items || 0).toLocaleString() + " items · " + mb + "M chars · last run " + ago + " ago"
+           + (ingest.brain && ingest.brain.configured ? " · ⇄ brain" : " · local")
+  }
+
+  function ingestSources() {
+    if (!ingest || !ingest.total || !ingest.total.per_source) return ""
+    var per = ingest.total.per_source, keys = Object.keys(per).sort(), parts = []
+    for (var i = 0; i < keys.length; i++) parts.push(keys[i] + " " + per[keys[i]].items)
+    return parts.join("  ·  ")
+  }
+
+  // "bind now" actions. Each is one ingester invocation; the run's own
+  // desktop notification reports what it bound, then status.json is re-read.
+  function ingestRun(args) {
+    root.notice = "ingesting…"
+    bindProc.command = ["sh", "-c", shellQuote(ingestBin) + " " + args + " >/dev/null 2>&1; " + shellQuote(ingestBin) + " status >/dev/null 2>&1"]
+    bindProc.running = true
+  }
+
+  function ingestFilePick() {
+    root.notice = "pick files to bind…"
+    bindProc.command = ["sh", "-c",
+      "picked=$(omarchy-file-select --title 'Bind into memory' --multiple) || exit 0; [ -n \"$picked\" ] || exit 0; "
+      + "printf '%s\n' \"$picked\" | xargs -d '\n' " + shellQuote(ingestBin) + " file >/dev/null 2>&1"]
+    bindProc.running = true
+  }
+
+  Process {
+    id: bindProc
+    running: false
+    command: []
+    onExited: function (code) {
+      root.notice = ""
+      root.readIngest()
+    }
+  }
 
   // ---- response bounds -----------------------------------------------------
   // Every one of these is enforced at the PRODUCER (curl | head -c) or before
@@ -60,7 +130,7 @@ Item {
   function statusLine() {
     if (!checked) return "checking daemon…"
     if (!daemonUp) return "leCore daemon not found at " + endpoint
-    if (!configured) return "set a context id in settings"
+    if (!configured) return "nothing bound yet — install openzoo-ingest or set a context id"
     if (busy) return "searching…"
     if (notice.length) return notice
     if (corpusChunks > 0)
@@ -102,11 +172,21 @@ Item {
     var q = String(query || "").trim()
     if (q.length === 0) { root.results = []; return }
     if (!daemonUp) { checkHealth(); return }
-    if (!configured) { root.notice = "no context id configured"; return }
+    if (!configured) { root.notice = "nothing bound yet"; return }
 
     root.lastQuery = q
     root.busy = true
     root.notice = ""
+
+    // No pasted context id: let the ingester fan the query across every
+    // source context it owns. Same daemon-shaped JSON comes back.
+    if (contextId.trim().length === 0) {
+      recallProc.command = ["sh", "-c",
+        shellQuote(ingestBin) + " recall " + shellQuote(q) + " -k " + Math.max(1, Math.min(256, topK))
+        + " | head -c " + (maxResponseBytes + 1)]
+      recallProc.running = true
+      return
+    }
 
     var body = JSON.stringify({
       tenant_id: tenantId,
@@ -210,5 +290,5 @@ Item {
     command: []
   }
 
-  Component.onCompleted: checkHealth()
+  Component.onCompleted: { checkHealth(); readIngest() }
 }

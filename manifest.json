@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "openzoo",
   "name": "openzoo",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "author": "stacc",
   "license": "MIT",
   "repository": "https://github.com/staccDOTsol/omarchy-openzoo-plugin",
@@ -64,7 +64,7 @@
         "key": "contextId",
         "type": "string",
         "label": "Context id",
-        "description": "Which bound corpus to search (ctx_...). Required — the daemon has no list endpoint."
+        "description": "Optional. Leave empty to search everything openzoo-ingest has bound (all sources); set a ctx_... to pin one corpus."
       },
       {
         "key": "topK",

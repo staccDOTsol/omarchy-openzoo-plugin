@@ -110,7 +110,16 @@ Panel {
   }
 
   Component.onCompleted: svc.checkHealth()
-  onOpenedChanged: if (opened) svc.checkHealth()
+  onOpenedChanged: if (opened) { svc.checkHealth(); svc.readIngest() }
+
+  // Keep the ingest line honest while the panel is open: a run every ten
+  // minutes means "last run 40s ago" goes stale fast.
+  Timer {
+    interval: 30000
+    running: root.opened
+    repeat: true
+    onTriggered: svc.readIngest()
+  }
 
   // ---- popup ---------------------------------------------------------------
   KeyboardPanel {
@@ -250,13 +259,66 @@ Panel {
           }
         }
 
+        // ---- INGEST: what openzoo-ingest has bound, and two ways to feed it ----
+        // Visible only when a status.json exists, i.e. the separate ingest
+        // service is installed. Nothing here egresses: the ingester writes to
+        // the loopback daemon unless a shared brain was configured on purpose,
+        // and the line says which.
+        Column {
+          width: parent.width
+          visible: svc.ingest !== null
+          spacing: Style.space(3)
+
+          Text {
+            width: parent.width
+            text: svc.ingestLine()
+            color: svc.ingest && svc.ingest.ok ? root.foreground : Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            elide: Text.ElideRight
+          }
+          Text {
+            width: parent.width
+            visible: svc.ingestSources().length > 0
+            text: svc.ingestSources()
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+          Row {
+            spacing: Style.space(14)
+            Text {
+              text: "bind clipboard now"
+              color: Color.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              TapHandler { onTapped: svc.ingestRun("run clipboard notifications") }
+            }
+            Text {
+              text: "bind files…"
+              color: Color.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              TapHandler { onTapped: svc.ingestFilePick() }
+            }
+            Text {
+              text: "bind everything"
+              color: Color.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              TapHandler { onTapped: svc.ingestRun("run") }
+            }
+          }
+        }
+
         // ---- search input ----
         TextField {
           id: input
           width: parent.width
           visible: svc.daemonUp
           foreground: root.foreground
-          placeholderText: "search your bound corpus…"
+          placeholderText: svc.ingestAvailable ? "search everything you've bound…" : "search your bound corpus…"
           enabled: svc.daemonUp && svc.configured
           font.family: root.fontFamily
           // Search on Enter rather than per-keystroke: recall is a real query
