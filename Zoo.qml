@@ -30,6 +30,10 @@ Item {
   // is no token setting here and that is not an omission.
   property string proxy: "http://localhost:8402"
   property string model: "deepseek/deepseek-v4-pro-0813"
+  // `openzoo ask --web`: a keyless DuckDuckGo search whose top results ride
+  // in the one paid call. Egress of the question text to duckduckgo.com; the
+  // panel says so in words whenever it is on.
+  property bool webSearch: true
 
   // Deliberately short: it is prepended to every ask and the caller pays for
   // its tokens. Names the surface, the desktop, and the payment model, because
@@ -216,6 +220,7 @@ Item {
     askProc.command = ["sh", "-c",
       ozPath() + "openzoo ask " + shellQuote(q)
       + " --model " + shellQuote(model)
+      + (webSearch ? " --web" : "")
       // TELL THE MODEL WHERE IT IS. `openzoo ask` bypasses the local proxy, so
       // nothing injects a brief and the model receives the user's words alone.
       // MEASURED from this very box: "do you even love omarchy thru this

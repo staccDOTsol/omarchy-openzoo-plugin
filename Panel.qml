@@ -56,6 +56,7 @@ Panel {
   readonly property string cfgHostedKey: setting("hostedKey", "")
   readonly property string cfgProxy: setting("proxy", "http://localhost:8402")
   readonly property string cfgModel: setting("model", "deepseek/deepseek-v4-pro-0813")
+  readonly property bool cfgWeb: setting("webSearch", true) === true
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -78,6 +79,7 @@ Panel {
     id: zoo
     proxy: root.cfgProxy
     model: root.cfgModel
+    webSearch: root.cfgWeb
   }
 
   // ---- bar item ------------------------------------------------------------
@@ -198,6 +200,7 @@ Panel {
           width: parent.width
           wrapMode: Text.Wrap
           text: "recall stays on this machine   ·   ask: only your question and the slices that matched it leave, to a hosted model (paid per call)"
+                + (root.cfgWeb ? "   ·   web search ON: the question also goes to DuckDuckGo (free)" : "   ·   web search off")
                 + (svc.ingest && svc.ingest.egress ? "   ·   ingest → " + svc.ingest.egress.summary : "")
           color: root.dim
           font.family: root.fontFamily

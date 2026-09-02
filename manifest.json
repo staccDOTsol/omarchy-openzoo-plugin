@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "openzoo",
   "name": "openzoo",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "author": "stacc",
   "license": "MIT",
   "repository": "https://github.com/staccDOTsol/omarchy-openzoo-plugin",
@@ -27,7 +27,8 @@
       "tenantId": "claude-code",
       "contextId": "",
       "topK": 8,
-      "hostedKey": ""
+      "hostedKey": "",
+      "webSearch": true
     },
     "schema": [
       {
@@ -77,6 +78,12 @@
         "type": "string",
         "label": "openzoo key (optional)",
         "description": "LEAVE EMPTY FOR FULLY LOCAL. Setting an ozk_live_ key opts in to hosted models and cross-machine corpora, and sends queries off this machine."
+      },
+      {
+        "key": "webSearch",
+        "type": "bool",
+        "label": "Web search on ask",
+        "description": "When on, the question is also sent to DuckDuckGo (free, no key) and the top results ride into the one paid call. Off = only your question and matching memory leave."
       }
     ]
   }
