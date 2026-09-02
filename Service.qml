@@ -79,8 +79,12 @@ Item {
     var age = Math.max(0, Math.round(Date.now() / 1000 - Number(ingest.at || 0)))
     var ago = age < 90 ? age + "s" : Math.round(age / 60) + "m"
     var mb = (Number(t.chars || 0) / 1e6).toFixed(1)
-    return (ingest.ok ? "● " : "✗ ") + Number(t.items || 0).toLocaleString() + " items · " + mb + "M chars · last run " + ago + " ago"
-           + (ingest.brain && ingest.brain.configured ? " · ⇄ brain" : " · local")
+    // The posture is stated in words from status.json, never inferred here:
+    // "local only" / "shared brain" / "screenshot vision (N/run)".
+    var eg = (ingest.egress && ingest.egress.summary)
+             ? ingest.egress.summary
+             : (ingest.brain && ingest.brain.configured ? "shared brain" : "local only")
+    return (ingest.ok ? "● " : "✗ ") + Number(t.items || 0).toLocaleString() + " items · " + mb + "M chars · last run " + ago + " ago · " + eg
   }
 
   function ingestSources() {
