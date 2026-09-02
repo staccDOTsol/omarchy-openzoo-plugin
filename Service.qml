@@ -140,7 +140,7 @@ Item {
     if (corpusChunks > 0)
       return (localOnly ? "local · " : "hosted · ")
              + corpusChunks + " chunks · " + Math.round(corpusChars / 1024) + "KB bound"
-    return localOnly ? "local — nothing leaves this machine" : "hosted"
+    return localOnly ? "recall is local — only slices that match your question leave, with it" : "hosted recall"
   }
 
   // The recalled slices as one block for the model: source-tagged, per-slice

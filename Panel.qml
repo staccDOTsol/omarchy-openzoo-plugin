@@ -9,8 +9,9 @@ import qs.Ui
 // slice back. So the surface is one input and a result list — no hero, no
 // cards. Settings live in the manifest schema where Omarchy renders them.
 //
-// The header states the privacy posture in words on every open ("local —
-// nothing leaves this machine"). That is not decoration: this plugin CAN be
+// The header states the privacy posture in words on every open: recall is
+// local, and ONLY the slices that match a question leave, with it, when you
+// ask. That is not decoration: this plugin CAN be
 // pointed at a hosted service, and a user should never have to guess which
 // mode they are in.
 //
@@ -196,7 +197,7 @@ Panel {
         Text {
           width: parent.width
           wrapMode: Text.Wrap
-          text: "recall → local (leCore on this machine)   ·   ask → your question + matching slices leave to a hosted model (paid per call)"
+          text: "recall stays on this machine   ·   ask: only your question and the slices that matched it leave, to a hosted model (paid per call)"
                 + (svc.ingest && svc.ingest.egress ? "   ·   ingest → " + svc.ingest.egress.summary : "")
           color: root.dim
           font.family: root.fontFamily

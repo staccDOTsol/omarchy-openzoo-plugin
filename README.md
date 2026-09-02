@@ -10,7 +10,7 @@ It also searches your own corpus: type a fragment of something you half-remember
 and get the actual slice back, matched semantically across far more text than
 fits in any context window.
 
-**Local by default. Nothing leaves your machine unless you set a hosted key.**
+**Recall is local. The only thing that leaves your machine is what you ask, plus the slices of your own memory that matched it — attached to that one paid call.** Set a hosted key and recall itself moves off-machine; that is the only other egress.
 
 ## Install
 

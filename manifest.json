@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "openzoo",
   "name": "openzoo",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": "stacc",
   "license": "MIT",
   "repository": "https://github.com/staccDOTsol/omarchy-openzoo-plugin",
@@ -46,7 +46,7 @@
         "key": "endpoint",
         "type": "string",
         "label": "leCore daemon",
-        "description": "Local holographic memory daemon. Default is loopback — nothing leaves this machine."
+        "description": "Local holographic memory daemon on loopback. Recall never leaves the machine; only the slices that match a question leave, attached to that question, when you ask."
       },
       {
         "key": "token",
