@@ -112,6 +112,32 @@ Panel {
   Component.onCompleted: svc.checkHealth()
   onOpenedChanged: if (opened) { svc.checkHealth(); svc.readIngest() }
 
+  // ONE BOX. A question first recalls over the local corpus (no egress), then
+  // makes the single hosted call with those slices attached. With no local
+  // memory to consult it is a plain ask. The slices used are listed under the
+  // answer so the user can see exactly what left the machine with the question.
+  property string pendingQuestion: ""
+  function askWithMemory(text) {
+    var q = String(text || "").trim()
+    if (q.length === 0) return
+    if (svc.daemonUp && svc.configured) {
+      root.pendingQuestion = q
+      svc.search(q)
+    } else {
+      svc.results = []
+      zoo.ask(q, "")
+    }
+  }
+  Connections {
+    target: svc
+    function onBusyChanged() {
+      if (svc.busy || root.pendingQuestion.length === 0) return
+      var q = root.pendingQuestion
+      root.pendingQuestion = ""
+      zoo.ask(q, svc.memoryText())
+    }
+  }
+
   // Keep the ingest line honest while the panel is open: a run every ten
   // minutes means "last run 40s ago" goes stale fast.
   Timer {
@@ -170,7 +196,7 @@ Panel {
         Text {
           width: parent.width
           wrapMode: Text.Wrap
-          text: "ask → leaves the machine (hosted model, paid per call)   ·   memory → local"
+          text: "recall → local (leCore on this machine)   ·   ask → your question + matching slices leave to a hosted model (paid per call)"
                 + (svc.ingest && svc.ingest.egress ? "   ·   ingest → " + svc.ingest.egress.summary : "")
           color: root.dim
           font.family: root.fontFamily
@@ -184,10 +210,12 @@ Panel {
           foreground: root.foreground
           // NOT gated on zoo.proxyUp: `openzoo ask` talks to the gateway
           // directly, so the box works whether or not the agent is running.
-          placeholderText: zoo.asking ? "asking…" : "ask openzoo…"
-          enabled: !zoo.asking
+          placeholderText: svc.busy ? "recalling from your memory…"
+                         : zoo.asking ? "asking…"
+                         : (svc.daemonUp && svc.configured ? "ask — answered from everything you've bound…" : "ask openzoo…")
+          enabled: !zoo.asking && !svc.busy
           font.family: root.fontFamily
-          onAccepted: zoo.ask(text)
+          onAccepted: root.askWithMemory(text)
         }
 
         Text {
@@ -327,20 +355,6 @@ Panel {
           }
         }
 
-        // ---- search input ----
-        TextField {
-          id: input
-          width: parent.width
-          visible: svc.daemonUp
-          foreground: root.foreground
-          placeholderText: svc.ingestAvailable ? "search everything you've bound…" : "search your bound corpus…"
-          enabled: svc.daemonUp && svc.configured
-          font.family: root.fontFamily
-          // Search on Enter rather than per-keystroke: recall is a real query
-          // against the whole corpus, not a prefix filter over a loaded list.
-          onAccepted: svc.search(text)
-        }
-
         // ---- empty-state guidance (only reachable WITH a daemon now) ----
         Text {
           width: parent.width
@@ -404,7 +418,7 @@ Panel {
         Text {
           width: parent.width
           visible: svc.results.length > 0
-          text: "Click a slice to copy it."
+          text: "from your memory (local) — these slices rode along with the question. Click one to copy it."
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

@@ -181,9 +181,19 @@ Item {
   // THE POINT OF THE WIDGET: a question answered in the bar, with no terminal
   // and no API key. Every turn still pays x402 from the local burner, so an
   // unfunded wallet fails here — and must say so plainly rather than hanging.
-  function ask(question) {
+  // `memory` is the text of slices recalled from the LOCAL leCore corpus for
+  // this question (Service.search). It rides in the system prompt of this one
+  // call — the only egress in the panel — so the model answers from the
+  // user's own material. Bounded here: the caller pays for every character.
+  readonly property int maxMemoryChars: 6000
+  function ask(question, memory) {
     var q = String(question || "").trim()
     if (q.length === 0) return
+    var mem = String(memory || "").trim()
+    if (mem.length > maxMemoryChars) mem = mem.substring(0, maxMemoryChars) + "\n…"
+    var system = systemPrompt + (mem.length
+      ? "\n\nThe user's own local memory (leCore, on this machine) returned these slices for the question. Use them when they are relevant, quote them when you rely on them, and say when they do not help:\n\n" + mem
+      : "")
 
     root.asking = true
     root.answer = ""
@@ -212,7 +222,7 @@ Item {
       // uiux?!?" came back "I think you mean *anarchy*?" — deepseek had no way
       // to know omarchy was a real thing, let alone the desktop it was running
       // on. One sentence of context is the whole difference.
-      + " --system " + shellQuote(systemPrompt)
+      + " --system " + shellQuote(system)
       // NO `2>&1`. stdout is the ANSWER; stderr is the receipt line plus any
       // warning the runtime feels like printing. Folding them together put
       // "bigint: Failed to load bindings, pure JS will be used (try npm run

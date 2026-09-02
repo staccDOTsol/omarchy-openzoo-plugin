@@ -143,6 +143,18 @@ Item {
     return localOnly ? "local — nothing leaves this machine" : "hosted"
   }
 
+  // The recalled slices as one block for the model: source-tagged, per-slice
+  // capped, so a single huge slice cannot crowd out the rest.
+  function memoryText() {
+    var parts = []
+    for (var i = 0; i < results.length; i++) {
+      var r = results[i]
+      var src = r.metadata && r.metadata.source ? r.metadata.source : "memory"
+      parts.push("[" + src + "] " + String(r.text || "").substring(0, 1200))
+    }
+    return parts.join("\n\n")
+  }
+
   function shellQuote(s) {
     return "'" + String(s).replace(/'/g, "'\\''") + "'"
   }
