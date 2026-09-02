@@ -162,6 +162,21 @@ Panel {
           elide: Text.ElideRight
         }
 
+        // ---- LOCAL vs EGRESS, in one line, always visible ----
+        // Three things live in this panel and they do not share a privacy
+        // posture: ask sends the question to a hosted model (paid, x402);
+        // memory search stays on loopback; ingest states its own posture from
+        // status.json. Said here so nobody has to infer it from a glyph.
+        Text {
+          width: parent.width
+          wrapMode: Text.Wrap
+          text: "ask → leaves the machine (hosted model, paid per call)   ·   memory → local"
+                + (svc.ingest && svc.ingest.egress ? "   ·   ingest → " + svc.ingest.egress.summary : "")
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
         // ---- ASK: a question answered here, with no terminal ----
         TextField {
           id: askInput
