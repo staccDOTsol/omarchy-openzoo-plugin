@@ -179,11 +179,18 @@ Panel {
         anchors.top: parent.top
         spacing: Style.space(12)
 
+        // PlainText on every Text in this panel. Model answers, recalled
+        // slices, ingest summaries, and daemon status are service-controlled.
+        // The default AutoText format parses markup and can load remote images
+        // inside the shell. Nothing here is rich text, and nothing here
+        // follows a link.
+
         // ---- SPEND: what this session has cost, and the counterfactual ----
         // First thing in the panel because it is the thing you open the panel
         // for. `savedUsd`/`savingX` are the product; spend alone is just a bill.
         Text {
           width: parent.width
+          textFormat: Text.PlainText
           text: zoo.statusLine()
           color: zoo.proxyUp ? root.foreground : Color.urgent
           font.family: root.fontFamily
@@ -199,6 +206,7 @@ Panel {
         Text {
           width: parent.width
           wrapMode: Text.Wrap
+          textFormat: Text.PlainText
           text: "recall stays on this machine   ·   ask: only your question and the slices that matched it leave, to a hosted model (paid per call)"
                 + (root.cfgWeb ? "   ·   web search ON: the question also goes to DuckDuckGo (free)" : "   ·   web search off")
                 + (svc.ingest && svc.ingest.egress ? "   ·   ingest → " + svc.ingest.egress.summary : "")
@@ -226,6 +234,7 @@ Panel {
           width: parent.width
           visible: zoo.askNotice.length > 0
           wrapMode: Text.Wrap
+          textFormat: Text.PlainText
           text: zoo.askNotice
           color: Color.urgent
           font.family: root.fontFamily
@@ -253,6 +262,7 @@ Panel {
             // out of the panel and over the desktop. Text.Wrap prefers word
             // boundaries and breaks anywhere when a single token cannot fit.
             wrapMode: Text.Wrap
+            textFormat: Text.PlainText
             text: zoo.answer
             color: root.foreground
             font.family: root.fontFamily
@@ -265,6 +275,7 @@ Panel {
         Text {
           width: parent.width
           visible: zoo.wallet.length > 0
+          textFormat: Text.PlainText
           text: "wallet  " + zoo.wallet
           color: root.dim
           font.family: root.fontFamily
@@ -291,6 +302,7 @@ Panel {
           spacing: Style.space(8)
 
           Text {
+            textFormat: Text.PlainText
             text: svc.localOnly ? root.glyphLocal : root.iconGlyph
             font.family: root.fontFamily
             font.pixelSize: Style.font.title
@@ -298,6 +310,7 @@ Panel {
           }
           Text {
             width: parent.width - parent.spacing - Style.space(20)
+            textFormat: Text.PlainText
             text: svc.statusLine()
             color: svc.daemonUp ? root.dim : Color.urgent
             font.family: root.fontFamily
@@ -318,6 +331,7 @@ Panel {
 
           Text {
             width: parent.width
+            textFormat: Text.PlainText
             text: svc.ingestLine()
             color: svc.ingest && svc.ingest.ok ? root.foreground : Color.urgent
             font.family: root.fontFamily
@@ -327,6 +341,7 @@ Panel {
           Text {
             width: parent.width
             visible: svc.ingestSources().length > 0
+            textFormat: Text.PlainText
             text: svc.ingestSources()
             color: root.dim
             font.family: root.fontFamily
@@ -336,6 +351,7 @@ Panel {
           Row {
             spacing: Style.space(14)
             Text {
+              textFormat: Text.PlainText
               text: "bind clipboard now"
               color: Color.accent
               font.family: root.fontFamily
@@ -343,6 +359,7 @@ Panel {
               TapHandler { onTapped: svc.ingestRun("run clipboard notifications") }
             }
             Text {
+              textFormat: Text.PlainText
               text: "bind files…"
               color: Color.accent
               font.family: root.fontFamily
@@ -350,6 +367,7 @@ Panel {
               TapHandler { onTapped: svc.ingestFilePick() }
             }
             Text {
+              textFormat: Text.PlainText
               text: "bind everything"
               color: Color.accent
               font.family: root.fontFamily
@@ -367,6 +385,7 @@ Panel {
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
+          textFormat: Text.PlainText
           text: "Start the daemon, then reopen this panel. Nothing here works "
                 + "without it, and nothing here talks to the network without a key."
         }
@@ -401,6 +420,7 @@ Panel {
 
               Text {
                 width: parent.width
+                textFormat: Text.PlainText
                 text: modelData.text.length > 280
                       ? modelData.text.substring(0, 280) + "…"
                       : modelData.text
@@ -410,6 +430,7 @@ Panel {
                 font.pixelSize: Style.font.bodySmall
               }
               Text {
+                textFormat: Text.PlainText
                 text: "score " + modelData.score.toFixed(3)
                 color: root.dim
                 font.family: root.fontFamily
@@ -422,6 +443,7 @@ Panel {
         Text {
           width: parent.width
           visible: svc.results.length > 0
+          textFormat: Text.PlainText
           text: "from your memory (local) — these slices rode along with the question. Click one to copy it."
           color: root.dim
           font.family: root.fontFamily

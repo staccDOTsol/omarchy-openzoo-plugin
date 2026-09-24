@@ -9,10 +9,13 @@ import Quickshell.Io
 // launcher query is RETRIEVAL, not generation — you are looking for the thing
 // you already have — so the default path needs no model and no network at all.
 //
-// Requests go out through `curl` in a Process rather than QML's XMLHttpRequest:
-// the reference plugins in this ecosystem already drive everything through
-// Process, curl is present on every Omarchy install, and it keeps header and
-// timeout handling explicit instead of depending on QML's network stack.
+// Requests go out through `curl` in a Process. The daemon bearer token is
+// never an argument and never a piece of a shell string: the recall request
+// is a curl config document written to curl's stdin (`curl -q -s --config -`).
+// `-q` skips ~/.curlrc so a trace or header stashed there cannot record the
+// token. User-configurable values are not interpolated into `sh -c` either;
+// the only shell scripts are fixed pipelines, and every variable value is a
+// separate argv element or part of that stdin document.
 //
 // Response shape is not guessed — it was read off a live daemon:
 //   POST /internal/v1/hrr/recall
@@ -25,12 +28,15 @@ Item {
 
   // ---- configuration (populated by the host from manifest defaults/schema) --
   property string endpoint: "http://127.0.0.1:8787"
+  // Passed to curl only inside the stdin config document. Never argv, never
+  // a shell word, never a log line.
   property string token: "hrr-lab-token"
   property string tenantId: "claude-code"
   property string contextId: ""
   property int topK: 8
   // Empty means fully local. See the manifest note — this is the ONLY setting
-  // that causes anything to leave the machine.
+  // that causes anything to leave the machine. It is a mode flag here: it is
+  // never placed on a command line, in an environment variable, or in a log.
   property string hostedKey: ""
 
   // ---- state ---------------------------------------------------------------
@@ -55,8 +61,12 @@ Item {
   readonly property bool ingestAvailable: ingest !== null && ingest.contexts && Object.keys(ingest.contexts).length > 0
   readonly property bool configured: contextId.trim().length > 0 || ingestAvailable
 
+  // True while `bindProc` still owes the follow-up `status` invocation.
+  property bool ingestStatusPending: false
+
   function readIngest() {
-    ingestProc.command = ["sh", "-c", "cat " + shellQuote(ingestStatusPath) + " 2>/dev/null | head -c 65536"]
+    // argv, not a shell string: the path comes from HOME / XDG_STATE_HOME.
+    ingestProc.command = ["head", "-c", "65536", "--", ingestStatusPath]
     ingestProc.running = true
   }
 
@@ -96,17 +106,30 @@ Item {
 
   // "bind now" actions. Each is one ingester invocation; the run's own
   // desktop notification reports what it bound, then status.json is re-read.
+  // The script is fixed. The binary and its arguments are argv elements, and
+  // stdout/stderr are discarded the way the previous shell redirect did, so a
+  // chatty ingester cannot SIGPIPE itself against a closed pipe.
   function ingestRun(args) {
     root.notice = "ingesting…"
-    bindProc.command = ["sh", "-c", shellQuote(ingestBin) + " " + args + " >/dev/null 2>&1; " + shellQuote(ingestBin) + " status >/dev/null 2>&1"]
+    root.ingestStatusPending = true
+    var parts = String(args || "").split(" ")
+    var cmd = ["sh", "-c", 'exec "$0" "$@" >/dev/null 2>&1', ingestBin]
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i].length > 0) cmd.push(parts[i])
+    }
+    bindProc.command = cmd
     bindProc.running = true
   }
 
   function ingestFilePick() {
     root.notice = "pick files to bind…"
-    bindProc.command = ["sh", "-c",
-      "picked=$(omarchy-file-select --title 'Bind into memory' --multiple) || exit 0; [ -n \"$picked\" ] || exit 0; "
-      + "printf '%s\n' \"$picked\" | xargs -d '\n' " + shellQuote(ingestBin) + " file >/dev/null 2>&1"]
+    root.ingestStatusPending = false
+    bindProc.command = [
+      "sh", "-c",
+      "picked=$(omarchy-file-select --title 'Bind into memory' --multiple) || exit 0; [ -n \"$picked\" ] || exit 0; printf '%s\\n' \"$picked\" | xargs -d '\\n' -- \"$1\" file >/dev/null 2>&1",
+      "sh",
+      ingestBin
+    ]
     bindProc.running = true
   }
 
@@ -115,6 +138,12 @@ Item {
     running: false
     command: []
     onExited: function (code) {
+      if (root.ingestStatusPending) {
+        root.ingestStatusPending = false
+        bindProc.command = ["sh", "-c", 'exec "$0" "$@" >/dev/null 2>&1', root.ingestBin, "status"]
+        bindProc.running = true
+        return
+      }
       root.notice = ""
       root.readIngest()
     }
@@ -155,16 +184,31 @@ Item {
     return parts.join("\n\n")
   }
 
-  function shellQuote(s) {
-    return "'" + String(s).replace(/'/g, "'\\''") + "'"
+  // Quote a value for a curl config file. Inside double quotes curl only
+  // treats \\ \" \t \n \r \v as escapes, and a raw newline would start a new
+  // option line — which is how a token or a query would become another flag.
+  function curlQuoted(s) {
+    var str = String(s)
+    var out = "\""
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charAt(i)
+      if (c === "\\" || c === "\"") out += "\\" + c
+      else if (c === "\n") out += "\\n"
+      else if (c === "\r") out += "\\r"
+      else if (c === "\t") out += "\\t"
+      else out += c
+    }
+    return out + "\""
   }
 
   // ---- health --------------------------------------------------------------
   // Runs once at startup and after a failed query. A dead daemon must degrade
   // to a clear message, never a hang and never a crashed bar.
   function checkHealth() {
-    healthProc.command = ["sh", "-c",
-      "curl -s -m 3 -o /dev/null -w '%{http_code}' " + shellQuote(endpoint + "/health")]
+    healthProc.command = [
+      "curl", "-q", "-s", "-m", "3", "-o", "/dev/null", "-w", "%{http_code}",
+      "--url", endpoint + "/health"
+    ]
     healthProc.running = true
   }
 
@@ -184,22 +228,43 @@ Item {
   }
 
   // ---- recall --------------------------------------------------------------
+  // Holds the curl config, including the bearer line, only until stdin is
+  // written. Cleared as soon as the process has it.
+  property string pendingRecallConfig: ""
+  property bool recallSendsAuth: false
+  property string pendingCopy: ""
+
   function search(query) {
     var q = String(query || "").trim()
     if (q.length === 0) { root.results = []; return }
     if (!daemonUp) { checkHealth(); return }
     if (!configured) { root.notice = "nothing bound yet"; return }
+    // A second recall while the first is still starting would overwrite the
+    // stdin config before curl reads it. The panel already disables input.
+    if (root.busy) return
 
     root.lastQuery = q
     root.busy = true
     root.notice = ""
 
+    var cap = String(maxResponseBytes + 1)
+
     // No pasted context id: let the ingester fan the query across every
-    // source context it owns. Same daemon-shaped JSON comes back.
+    // source context it owns. Same daemon-shaped JSON comes back. This path
+    // does not send the daemon token at all.
     if (contextId.trim().length === 0) {
-      recallProc.command = ["sh", "-c",
-        shellQuote(ingestBin) + " recall " + shellQuote(q) + " -k " + Math.max(1, Math.min(256, topK))
-        + " | head -c " + (maxResponseBytes + 1)]
+      root.recallSendsAuth = false
+      root.pendingRecallConfig = ""
+      recallProc.stdinEnabled = false
+      recallProc.command = [
+        "sh", "-c",
+        '"$1" recall "$2" -k "$3" | head -c "$4"',
+        "sh",
+        ingestBin,
+        q,
+        String(Math.max(1, Math.min(256, topK))),
+        cap
+      ]
       recallProc.running = true
       return
     }
@@ -211,36 +276,52 @@ Item {
       top_k: Math.max(1, Math.min(256, topK))
     })
 
-    // -m 15: a launcher must never hang the bar waiting on a slow recall.
-    //
-    // `| head -c` IS THE PRODUCER-SIDE BYTE CAP, and it has to be here rather
-    // than a length check after the fact: StdioCollector buffers the WHOLE
-    // stream in the shared, long-lived Quickshell process, so by the time QML
-    // could measure it the damage is done. A configured endpoint (this is a
-    // user-editable setting, and `hostedKey` mode points it off-machine) could
-    // otherwise stall or exhaust the shell that also draws the bar, the
-    // launcher and the notifications. Reported by the Omarchy marketplace
-    // review as UNBOUNDED-REMOTE-RESPONSE-IN-SHELL.
-    //
-    // Asking for CAP+1 is deliberate: a body that arrives at exactly the cap
-    // is indistinguishable from one that was cut, so the extra byte is how
-    // truncation is DETECTED and the parse refused instead of fed a half JSON.
-    recallProc.command = ["sh", "-c",
-      "curl -s -m 15 -X POST " + shellQuote(endpoint + "/internal/v1/hrr/recall")
-      + " -H " + shellQuote("Authorization: Bearer " + token)
-      + " -H 'content-type: application/json'"
-      + " -d " + shellQuote(body)
-      + " | head -c " + (maxResponseBytes + 1)]
+    // CR/LF stripped so the token cannot smuggle a second header. The value
+    // still rides inside the quoted config string, not on argv.
+    var tok = String(token).replace(/[\r\n]/g, "")
+    var url = endpoint + "/internal/v1/hrr/recall"
+    root.pendingRecallConfig = [
+      "max-time = 15",
+      "request = \"POST\"",
+      "url = " + curlQuoted(url),
+      "header = " + curlQuoted("Authorization: Bearer " + tok),
+      "header = \"content-type: application/json\"",
+      "data-binary = " + curlQuoted(body)
+    ].join("\n") + "\n"
+    root.recallSendsAuth = true
+    recallProc.stdinEnabled = true
+    // Fixed pipeline. The cap is ours; url, body, and token are not in this
+    // argv. `| head -c` is still the producer-side byte cap: StdioCollector
+    // buffers the whole stream in the shared Quickshell process, so a
+    // configured endpoint (user-editable, and hosted mode can point it
+    // off-machine) must be cut before it lands. CAP+1 is how truncation is
+    // detected — a body at exactly the cap is indistinguishable from a cut.
+    recallProc.command = [
+      "sh", "-c",
+      'curl -q -s --config - | head -c "$1"',
+      "sh",
+      cap
+    ]
     recallProc.running = true
   }
 
   Process {
     id: recallProc
     running: false
+    stdinEnabled: false
     command: []
     stdout: StdioCollector { id: recallOut; waitForEnd: true }
+    onStarted: {
+      if (!root.recallSendsAuth) return
+      recallProc.write(root.pendingRecallConfig)
+      root.pendingRecallConfig = ""
+      // EOF. curl reads the config from stdin and will not send until this
+      // closes. Closing also drops the bearer line out of the property.
+      recallProc.stdinEnabled = false
+    }
     onExited: function (code) {
       root.busy = false
+      root.pendingRecallConfig = ""
       var raw = String(recallOut.text || "")
       if (code !== 0 || raw.length === 0) {
         root.results = []
@@ -294,8 +375,11 @@ Item {
   // ---- clipboard -----------------------------------------------------------
   // Enter copies the slice. Deliberately NOT "open the source": a recalled
   // slice is text from a bound corpus and may have no file behind it at all.
+  // The slice is service-controlled, so it is written to wl-copy's stdin
+  // rather than interpolated into a shell command.
   function copySlice(text) {
-    copyProc.command = ["sh", "-c", "printf %s " + shellQuote(text) + " | wl-copy"]
+    root.pendingCopy = String(text || "")
+    copyProc.stdinEnabled = true
     copyProc.running = true
     root.notice = "copied"
   }
@@ -303,7 +387,13 @@ Item {
   Process {
     id: copyProc
     running: false
-    command: []
+    stdinEnabled: false
+    command: ["wl-copy"]
+    onStarted: {
+      copyProc.write(root.pendingCopy)
+      root.pendingCopy = ""
+      copyProc.stdinEnabled = false
+    }
   }
 
   Component.onCompleted: { checkHealth(); readIngest() }

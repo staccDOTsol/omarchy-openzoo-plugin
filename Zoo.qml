@@ -107,15 +107,31 @@ Item {
     return ""
   }
 
-  function shellQuote(s) {
-    return "'" + String(s).replace(/'/g, "'\\''") + "'"
+  // quickshell is started by uwsm/systemd, which does not source ~/.bashrc,
+  // and `openzoo` is a mise shim rather than a binary on the default PATH.
+  // The extra directories are appended after the inherited PATH, so a real
+  // openzoo earlier on PATH still wins. This is an environment entry, not a
+  // string glued onto a shell command.
+  function ozEnvironment() {
+    var home = String(Quickshell.env("HOME") || "")
+    var path = String(Quickshell.env("PATH") || "")
+    var extra = home + "/.local/share/mise/shims:"
+              + home + "/.local/bin:"
+              + home + "/.local/state/mise/shims"
+    return ({ PATH: path.length > 0 ? path + ":" + extra : extra })
   }
 
   // ---- live info -----------------------------------------------------------
   function refresh() {
-    infoProc.command = ["sh", "-c",
-      "curl -s -m 3 " + shellQuote(proxy + "/v1/info")
-      + " | head -c " + (maxInfoBytes + 1)]
+    // Fixed pipeline. `proxy` is user-configurable, so it is an argv element
+    // (`$1`), not text spliced into the shell script. `-q` ignores ~/.curlrc.
+    infoProc.command = [
+      "sh", "-c",
+      'curl -q -s -m 3 --url "$1" | head -c "$2"',
+      "sh",
+      proxy + "/v1/info",
+      String(maxInfoBytes + 1)
+    ]
     infoProc.running = true
   }
 
@@ -161,11 +177,15 @@ Item {
   // address must be whatever `openzoo` itself would use, or someone funds the
   // wrong one. Fails silently — a missing address is not worth a broken bar.
   function loadWallet() {
-    walletProc.command = ["sh", "-c",
-      ozPath() + "openzoo address 2>/dev/null | grep -oE '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1"
-      // head -1 bounds LINES, not bytes: one unterminated line is still
-      // unbounded. head -c is the byte cap.
-      + " | head -c " + (maxWalletBytes + 1)]
+    // head -1 bounds LINES, not bytes: one unterminated line is still
+    // unbounded. head -c is the byte cap. The script itself is fixed.
+    walletProc.environment = ozEnvironment()
+    walletProc.command = [
+      "sh", "-c",
+      "openzoo address 2>/dev/null | grep -oE '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1 | head -c \"$1\"",
+      "sh",
+      String(maxWalletBytes + 1)
+    ]
     walletProc.running = true
   }
 
@@ -217,40 +237,34 @@ Item {
     // --model is passed explicitly because the CLI's own default is
     // anthropic/claude-opus-5 — the most expensive row in the catalog, and a
     // surprising thing for a bar widget to spend on unasked.
-    askProc.command = ["sh", "-c",
-      ozPath() + "openzoo ask " + shellQuote(q)
-      + " --model " + shellQuote(model)
-      + (webSearch ? " --web" : "")
-      // TELL THE MODEL WHERE IT IS. `openzoo ask` bypasses the local proxy, so
-      // nothing injects a brief and the model receives the user's words alone.
-      // MEASURED from this very box: "do you even love omarchy thru this
-      // uiux?!?" came back "I think you mean *anarchy*?" — deepseek had no way
-      // to know omarchy was a real thing, let alone the desktop it was running
-      // on. One sentence of context is the whole difference.
-      + " --system " + shellQuote(system)
-      // NO `2>&1`. stdout is the ANSWER; stderr is the receipt line plus any
-      // warning the runtime feels like printing. Folding them together put
-      // "bigint: Failed to load bindings, pure JS will be used (try npm run
-      // rebuild?)" at the top of every reply in the panel — a native-module
-      // warning from a dependency, shown to someone who asked about Omarchy.
-      // The streams are collected separately below and stderr is only read
-      // when the command actually failed.
-      + " | head -c " + (maxAnswerBytes + 1)]
+    // Question, model, and system prompt are argv elements (`$1`..), not
+    // words spliced into the script. `model` is a setting; the system prompt
+    // carries recalled corpus text. Neither is a credential, and the daemon
+    // bearer token is not passed to this command at all.
+    //
+    // TELL THE MODEL WHERE IT IS. `openzoo ask` bypasses the local proxy, so
+    // nothing injects a brief and the model receives the user's words alone.
+    // MEASURED from this very box: "do you even love omarchy thru this
+    // uiux?!?" came back "I think you mean *anarchy*?" — deepseek had no way
+    // to know omarchy was a real thing, let alone the desktop it was running
+    // on. One sentence of context is the whole difference.
+    //
+    // NO `2>&1`. stdout is the ANSWER; stderr is the receipt line plus any
+    // warning the runtime feels like printing. Folding them together put
+    // "bigint: Failed to load bindings, pure JS will be used (try npm run
+    // rebuild?)" at the top of every reply in the panel — a native-module
+    // warning from a dependency, shown to someone who asked about Omarchy.
+    // The streams are collected separately below and stderr is only read
+    // when the command actually failed.
+    //
+    // `--web` is chosen by switching between two fixed scripts. The boolean
+    // setting is not concatenated into the script as a value.
+    var script = webSearch
+      ? 'openzoo ask "$1" --model "$2" --web --system "$3" | head -c "$4"'
+      : 'openzoo ask "$1" --model "$2" --system "$3" | head -c "$4"'
+    askProc.environment = ozEnvironment()
+    askProc.command = ["sh", "-c", script, "sh", q, model, system, String(maxAnswerBytes + 1)]
     askProc.running = true
-  }
-
-  // PATH FIX, AND IT IS THE WHOLE REASON THE BOX DID NOTHING.
-  //
-  // quickshell is started by uwsm/systemd, which does NOT source ~/.bashrc, and
-  // `openzoo` is a MISE SHIM rather than a binary in /usr/bin. So every Process
-  // here inherited a PATH with no shim dir on it and got "command not found" —
-  // the same trap that made omarchy-launch-floating-terminal-with-presentation
-  // fail on the menu entries.
-  //
-  // Prepending is safe: a real openzoo earlier on PATH still wins, because the
-  // shim dirs are appended after $PATH is expanded, not before it.
-  function ozPath() {
-    return 'PATH="$PATH:$HOME/.local/share/mise/shims:$HOME/.local/bin:$HOME/.local/state/mise/shims" '
   }
 
   Process {
@@ -301,15 +315,25 @@ Item {
   }
 
   // ---- clipboard -----------------------------------------------------------
+  // Model answers and wallet addresses are written to wl-copy's stdin. They
+  // are not interpolated into a shell command.
+  property string pendingCopy: ""
   function copyText(text) {
-    copyZooProc.command = ["sh", "-c", "printf %s " + shellQuote(text) + " | wl-copy"]
+    root.pendingCopy = String(text || "")
+    copyZooProc.stdinEnabled = true
     copyZooProc.running = true
   }
 
   Process {
     id: copyZooProc
     running: false
-    command: []
+    stdinEnabled: false
+    command: ["wl-copy"]
+    onStarted: {
+      copyZooProc.write(root.pendingCopy)
+      root.pendingCopy = ""
+      copyZooProc.stdinEnabled = false
+    }
   }
 
   Component.onCompleted: { refresh(); loadWallet() }
