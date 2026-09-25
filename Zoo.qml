@@ -48,11 +48,70 @@ Item {
   // SAME CLASS AS THE RECALL PATH the marketplace review flagged
   // (UNBOUNDED-REMOTE-RESPONSE-IN-SHELL): every Process below collects into a
   // StdioCollector inside the shared, long-lived Quickshell process, and
-  // `proxy` is a user-editable setting. The reviewer only saw Service.qml, but
-  // an unbounded answer here stalls the same bar. Capped at the PRODUCER.
+  // `proxy` is a user-editable setting. Caps are applied at the PRODUCER,
+  // on BOTH streams, before a single byte reaches the collector.
+  //
+  // The shell script is fixed. User-configurable values and question text are
+  // positional argv (`$1`..) only. Omarchy's /bin/sh is bash, so `set -o
+  // pipefail` is available and a failing CLI is not hidden by `head` exiting
+  // 0. If the shell rejects pipefail, the script exits 2 and does not run the
+  // command. The fd split keeps the streams apart:
+  //   { { cmd 2>&1 >&3 3>&- | head -c ERR >&2; } 3>&1 | head -c OUT; }
+  // stdout of cmd is fd 3 (the outer `head -c`), stderr of cmd is the inner
+  // `head -c`. Nothing is merged, and each `head -c` is CAP+1 so a cut is
+  // detectable (`length > cap`) rather than indistinguishable from a short
+  // body. Stderr that the widget does not display is `head -c … >/dev/null`:
+  // still a producer cap, and those bytes never enter the shell.
+  //
+  // The whole pipeline is `timeout -k 2 <secs>` (coreutils). That is the
+  // direct child of the Process, so SIGTERM reaches `timeout`, which signals
+  // its process group — grandchildren die with it, and the shell is not left
+  // holding their pipes. A QML Timer fires deadlineGraceSec after that
+  // ceiling, sets the plain-text timeout notice, SIGTERMs, then SIGKILLs if
+  // the process is still there. Exit 124 is timeout's TERM path; 137 is the
+  // KILL path (`-k 2`, or our SIGKILL).
   readonly property int maxInfoBytes: 65536
   readonly property int maxAnswerBytes: 262144
   readonly property int maxWalletBytes: 256
+  // Raw `openzoo address` stdout, before the base58 filter. The displayed
+  // address is still refused past maxWalletBytes.
+  readonly property int maxWalletRawBytes: 65536
+  readonly property int maxDiagBytes: 65536
+  readonly property int maxHealthBytes: 16
+
+  readonly property int infoTimeoutSec: 8
+  readonly property int walletTimeoutSec: 15
+  readonly property int askTimeoutSec: 120
+  readonly property int copyTimeoutSec: 10
+  readonly property int deadlineGraceSec: 5
+
+  readonly property string pipefailPreamble: "(set -o pipefail) 2>/dev/null || exit 2\nset -o pipefail\n"
+
+  // $1 url, $2 stdout cap+1, $3 stderr cap+1 (discarded after the cap).
+  readonly property string infoScript: pipefailPreamble
+    + "{ { curl -q -s -m 3 --url \"$1\" 2>&1 >&3 3>&- | head -c \"$3\" >/dev/null; } 3>&1 | head -c \"$2\"; }"
+
+  // $1 raw stdout cap+1, $2 stderr cap+1 (discarded). grep only sees the
+  // already-capped stdout, so it cannot buffer an unbounded address dump.
+  readonly property string walletScript: pipefailPreamble
+    + "{ { openzoo address 2>&1 >&3 3>&- | head -c \"$2\" >/dev/null; } 3>&1 | head -c \"$1\" | grep -oE \"[1-9A-HJ-NP-Za-km-z]{32,44}\" | head -1; }"
+
+  // $1 question, $2 model, $3 system, $4 stdout cap+1, $5 stderr cap+1.
+  // Two fixed scripts so the --web flag is never concatenated in from a setting.
+  readonly property string askScriptWeb: pipefailPreamble
+    + "{ { openzoo ask \"$1\" --model \"$2\" --web --system \"$3\" 2>&1 >&3 3>&- | head -c \"$5\" >&2; } 3>&1 | head -c \"$4\"; }"
+  readonly property string askScriptPlain: pipefailPreamble
+    + "{ { openzoo ask \"$1\" --model \"$2\" --system \"$3\" 2>&1 >&3 3>&- | head -c \"$5\" >&2; } 3>&1 | head -c \"$4\"; }"
+
+  function boundedCommand(seconds, script, args) {
+    var cmd = ["timeout", "-k", "2", String(seconds), "sh", "-c", script, "sh"]
+    for (var i = 0; i < args.length; i++) cmd.push(String(args[i]))
+    return cmd
+  }
+
+  function deadlineHit(code, flagged) {
+    return flagged === true || code === 124 || code === 137
+  }
 
   // ---- state ---------------------------------------------------------------
   property bool proxyUp: false
@@ -70,6 +129,24 @@ Item {
   property bool asking: false
   property string answer: ""
   property string askNotice: ""
+
+  // Launch ids: a newer ask() while the previous process is still dying must
+  // not have that exit applied as its result, and must not leave `asking`
+  // stuck if `timeout` cannot be exec'd (FailedToStart never emits exited).
+  property int askLaunch: 0
+  property int askStartedLaunch: 0
+  property int askClockLaunch: 0
+  property int askKillLaunch: 0
+  property bool askStop: false
+
+  property int infoExits: 0
+  property int infoExitsAtLaunch: -1
+  property bool infoStop: false
+  property int walletExits: 0
+  property int walletExitsAtLaunch: -1
+  property bool walletStop: false
+  property int copyExits: 0
+  property int copyExitsAtLaunch: -1
 
   // What the bar itself shows. Short by necessity — this competes for space
   // with every other module — so: spend, then the one number that is the
@@ -123,16 +200,26 @@ Item {
 
   // ---- live info -----------------------------------------------------------
   function refresh() {
-    // Fixed pipeline. `proxy` is user-configurable, so it is an argv element
-    // (`$1`), not text spliced into the shell script. `-q` ignores ~/.curlrc.
-    infoProc.command = [
-      "sh", "-c",
-      'curl -q -s -m 3 --url "$1" | head -c "$2"',
-      "sh",
+    if (infoProc.running) return
+    root.infoStop = false
+    root.infoExitsAtLaunch = root.infoExits
+    infoProc.command = boundedCommand(infoTimeoutSec, infoScript, [
       proxy + "/v1/info",
-      String(maxInfoBytes + 1)
-    ]
+      maxInfoBytes + 1,
+      maxDiagBytes + 1
+    ])
     infoProc.running = true
+  }
+
+  function expireInfo() {
+    if (!infoProc.running && root.checked) return
+    root.infoStop = true
+    root.checked = true
+    root.proxyUp = false
+    if (infoProc.running) {
+      infoProc.running = false
+      infoKill.restart()
+    }
   }
 
   Process {
@@ -140,12 +227,27 @@ Item {
     running: false
     command: []
     stdout: StdioCollector { id: infoOut; waitForEnd: true }
+    stderr: StdioCollector { id: infoErr; waitForEnd: true }
+    onStarted: {
+      infoKill.stop()
+      infoClock.restart()
+    }
     onExited: function (code) {
+      infoClock.stop()
+      infoKill.stop()
+      root.infoExits = root.infoExits + 1
       root.checked = true
+      if (root.deadlineHit(code, root.infoStop)) {
+        root.infoStop = false
+        root.proxyUp = false
+        return
+      }
+      root.infoStop = false
       var raw = String(infoOut.text || "")
-      if (code !== 0 || raw.length === 0) { root.proxyUp = false; return }
-      // A capped /v1/info is a misbehaving endpoint, not a live proxy.
+      // CAP+1: a cut body is not a live proxy, even when SIGPIPE made curl
+      // exit non-zero. Check the length before the status.
       if (raw.length > maxInfoBytes) { root.proxyUp = false; return }
+      if (code !== 0 || raw.length === 0) { root.proxyUp = false; return }
       try {
         var j = JSON.parse(raw)
         root.proxyUp = true
@@ -160,10 +262,32 @@ Item {
         root.proxyUp = false
       }
     }
+    onRunningChanged: {
+      if (infoProc.running) return
+      if (root.infoExits !== root.infoExitsAtLaunch) return
+      root.checked = true
+      root.proxyUp = false
+    }
+  }
+
+  Timer {
+    id: infoClock
+    interval: (root.infoTimeoutSec + root.deadlineGraceSec) * 1000
+    repeat: false
+    running: false
+    onTriggered: root.expireInfo()
+  }
+  Timer {
+    id: infoKill
+    interval: 2000
+    repeat: false
+    running: false
+    onTriggered: { if (infoProc.running) infoProc.signal(9) }
   }
 
   // Poll while the panel is closed too — the bar number is the whole point of
-  // an always-on widget, and 5s is well inside a turn.
+  // an always-on widget, and 5s is well inside a turn. refresh() no-ops while
+  // a check is still inside its deadline, so a slow one cannot pile up.
   Timer {
     interval: 5000
     running: true
@@ -177,16 +301,22 @@ Item {
   // address must be whatever `openzoo` itself would use, or someone funds the
   // wrong one. Fails silently — a missing address is not worth a broken bar.
   function loadWallet() {
-    // head -1 bounds LINES, not bytes: one unterminated line is still
-    // unbounded. head -c is the byte cap. The script itself is fixed.
+    if (walletProc.running) return
+    root.walletStop = false
+    root.walletExitsAtLaunch = root.walletExits
     walletProc.environment = ozEnvironment()
-    walletProc.command = [
-      "sh", "-c",
-      "openzoo address 2>/dev/null | grep -oE '[1-9A-HJ-NP-Za-km-z]{32,44}' | head -1 | head -c \"$1\"",
-      "sh",
-      String(maxWalletBytes + 1)
-    ]
+    walletProc.command = boundedCommand(walletTimeoutSec, walletScript, [
+      maxWalletRawBytes + 1,
+      maxDiagBytes + 1
+    ])
     walletProc.running = true
+  }
+
+  function expireWallet() {
+    root.walletStop = true
+    if (!walletProc.running) return
+    walletProc.running = false
+    walletKill.restart()
   }
 
   Process {
@@ -194,11 +324,46 @@ Item {
     running: false
     command: []
     stdout: StdioCollector { id: walletOut; waitForEnd: true }
-    onExited: function () {
-      var w = String(walletOut.text || "").trim()
-      // An address is ~44 chars; anything near the cap is not one.
-      root.wallet = w.length > maxWalletBytes ? "" : w
+    stderr: StdioCollector { id: walletErr; waitForEnd: true }
+    onStarted: {
+      walletKill.stop()
+      walletClock.restart()
     }
+    onExited: function (code) {
+      walletClock.stop()
+      walletKill.stop()
+      root.walletExits = root.walletExits + 1
+      if (root.deadlineHit(code, root.walletStop)) {
+        root.walletStop = false
+        return
+      }
+      root.walletStop = false
+      var w = String(walletOut.text || "").trim()
+      // An address is ~44 chars; anything near the display cap is not one.
+      // A cut raw dump (over the producer cap) is not one either.
+      if (w.length > maxWalletBytes) root.wallet = ""
+      else root.wallet = w
+    }
+    onRunningChanged: {
+      if (walletProc.running) return
+      if (root.walletExits !== root.walletExitsAtLaunch) return
+      // Failed to start: leave whatever address we already had.
+    }
+  }
+
+  Timer {
+    id: walletClock
+    interval: (root.walletTimeoutSec + root.deadlineGraceSec) * 1000
+    repeat: false
+    running: false
+    onTriggered: root.expireWallet()
+  }
+  Timer {
+    id: walletKill
+    interval: 2000
+    repeat: false
+    running: false
+    onTriggered: { if (walletProc.running) walletProc.signal(9) }
   }
 
   // ---- ask -----------------------------------------------------------------
@@ -219,6 +384,8 @@ Item {
       ? "\n\nThe user's own local memory (leCore, on this machine) returned these slices for the question. Use them when they are relevant, quote them when you rely on them, and say when they do not help:\n\n" + mem
       : "")
 
+    root.askLaunch = root.askLaunch + 1
+    root.askStop = false
     root.asking = true
     root.answer = ""
     root.askNotice = ""
@@ -249,22 +416,34 @@ Item {
     // to know omarchy was a real thing, let alone the desktop it was running
     // on. One sentence of context is the whole difference.
     //
-    // NO `2>&1`. stdout is the ANSWER; stderr is the receipt line plus any
-    // warning the runtime feels like printing. Folding them together put
-    // "bigint: Failed to load bindings, pure JS will be used (try npm run
-    // rebuild?)" at the top of every reply in the panel — a native-module
-    // warning from a dependency, shown to someone who asked about Omarchy.
-    // The streams are collected separately below and stderr is only read
-    // when the command actually failed.
-    //
-    // `--web` is chosen by switching between two fixed scripts. The boolean
-    // setting is not concatenated into the script as a value.
-    var script = webSearch
-      ? 'openzoo ask "$1" --model "$2" --web --system "$3" | head -c "$4"'
-      : 'openzoo ask "$1" --model "$2" --system "$3" | head -c "$4"'
+    // NO merge of the streams. stdout is the ANSWER; stderr is the receipt
+    // line plus any warning the runtime feels like printing. Folding them
+    // together put "bigint: Failed to load bindings, pure JS will be used
+    // (try npm run rebuild?)" at the top of every reply. Stderr is capped by
+    // its own head -c and only read when the command failed. A verbose stderr
+    // cannot fill the shell, and `timeout` plus the ask clock below cannot
+    // leave `openzoo ask` running after askTimeoutSec.
+    var script = webSearch ? askScriptWeb : askScriptPlain
     askProc.environment = ozEnvironment()
-    askProc.command = ["sh", "-c", script, "sh", q, model, system, String(maxAnswerBytes + 1)]
+    askProc.command = boundedCommand(askTimeoutSec, script, [
+      q, model, system, maxAnswerBytes + 1, maxDiagBytes + 1
+    ])
     askProc.running = true
+  }
+
+  function expireAsk() {
+    var stale = root.askClockLaunch !== root.askLaunch
+    if (askProc.running) {
+      if (!stale) root.askStop = true
+      askProc.running = false
+      root.askKillLaunch = root.askStartedLaunch
+      askKill.restart()
+    }
+    if (stale) return
+    root.askStop = true
+    root.asking = false
+    root.answer = ""
+    root.askNotice = "ask timed out"
   }
 
   Process {
@@ -272,17 +451,47 @@ Item {
     running: false
     command: []
     stdout: StdioCollector { id: askOut; waitForEnd: true }
-    // Bounded like stdout: a failing command can be as chatty as a succeeding
-    // one, and this buffer lives in the same shared shell process.
     stderr: StdioCollector { id: askErr; waitForEnd: true }
+    onStarted: {
+      root.askStartedLaunch = root.askLaunch
+      root.askClockLaunch = root.askLaunch
+      askKill.stop()
+      askStartWatch.stop()
+      askClock.restart()
+    }
     onExited: function (code) {
+      askClock.stop()
+      askKill.stop()
+      askStartWatch.stop()
+      // A newer ask() is queued in Quickshell (command already replaced,
+      // targetRunning set). This exit belongs to the previous process.
+      // Newer ask() replaced the command. expireAsk() SIGTERMs, which also
+      // clears Quickshell's queued restart, so start that command here.
+      if (root.askLaunch !== root.askStartedLaunch) {
+        root.askStop = false
+        if (!askProc.running) askProc.running = true
+        return
+      }
+      var timedOut = root.deadlineHit(code, root.askStop)
+      root.askStop = false
       root.asking = false
-      var raw = String(askOut.text || "").trim()
-      var err = String(askErr.text || "").trim()
-      if (raw.length > maxAnswerBytes) {
+      if (timedOut) {
+        root.answer = ""
+        root.askNotice = "ask timed out"
+        return
+      }
+      // Length before trim: a cut that ends in whitespace must still count,
+      // or CAP+1 detection would miss it.
+      var rawFull = String(askOut.text || "")
+      var errFull = String(askErr.text || "")
+      if (rawFull.length > maxAnswerBytes) {
         root.askNotice = "answer too large (over " + Math.round(maxAnswerBytes / 1024) + "KB) — refused"
         return
       }
+      var raw = rawFull.trim()
+      // Stderr over the cap is a prefix, not a document. firstLine only
+      // shows 200 characters of it.
+      var err = errFull.length > maxDiagBytes ? errFull.substring(0, maxDiagBytes).trim() : errFull.trim()
       if (raw.length === 0) {
         root.askNotice = code === 0 ? "empty answer" : (firstLine(err) || "ask failed with no output")
         return
@@ -312,28 +521,108 @@ Item {
       // Spend just moved; show it immediately rather than at the next tick.
       root.refresh()
     }
+    onRunningChanged: {
+      if (askProc.running || !root.asking) return
+      if (root.askStartedLaunch === root.askLaunch) return
+      askStartWatch.restart()
+    }
+  }
+
+  Timer {
+    id: askClock
+    interval: (root.askTimeoutSec + root.deadlineGraceSec) * 1000
+    repeat: false
+    running: false
+    onTriggered: root.expireAsk()
+  }
+  Timer {
+    id: askKill
+    interval: 2000
+    repeat: false
+    running: false
+    onTriggered: {
+      if (!askProc.running) return
+      if (root.askStartedLaunch !== root.askKillLaunch) return
+      askProc.signal(9)
+    }
+  }
+  // FailedToStart does not emit exited. Confirm after the turn so a queued
+  // relaunch, which starts in the same finished-handler, is not reported as
+  // a failure.
+  Timer {
+    id: askStartWatch
+    interval: 200
+    repeat: false
+    running: false
+    onTriggered: {
+      if (askProc.running || !root.asking) return
+      if (root.askStartedLaunch === root.askLaunch) return
+      root.asking = false
+      root.askNotice = "ask failed to start"
+    }
   }
 
   // ---- clipboard -----------------------------------------------------------
   // Model answers and wallet addresses are written to wl-copy's stdin. They
-  // are not interpolated into a shell command.
+  // are not interpolated into a shell command. `--foreground` so timeout
+  // waits on the wl-copy parent only: the parent forks a clipboard owner and
+  // exits, and that child must keep the selection alive. A parent that never
+  // exits is still killed at copyTimeoutSec.
   property string pendingCopy: ""
   function copyText(text) {
+    if (copyZooProc.running) return
     root.pendingCopy = String(text || "")
+    root.copyExitsAtLaunch = root.copyExits
     copyZooProc.stdinEnabled = true
+    copyZooProc.command = ["timeout", "--foreground", "-k", "2", String(copyTimeoutSec), "wl-copy"]
     copyZooProc.running = true
+  }
+
+  function expireCopy() {
+    root.pendingCopy = ""
+    if (!copyZooProc.running) return
+    copyZooProc.running = false
+    copyZooKill.restart()
   }
 
   Process {
     id: copyZooProc
     running: false
     stdinEnabled: false
-    command: ["wl-copy"]
+    command: ["timeout", "--foreground", "-k", "2", "10", "wl-copy"]
     onStarted: {
+      copyZooKill.stop()
       copyZooProc.write(root.pendingCopy)
       root.pendingCopy = ""
       copyZooProc.stdinEnabled = false
+      copyZooClock.restart()
     }
+    onExited: function (code) {
+      copyZooClock.stop()
+      copyZooKill.stop()
+      root.copyExits = root.copyExits + 1
+      root.pendingCopy = ""
+    }
+    onRunningChanged: {
+      if (copyZooProc.running) return
+      if (root.copyExits !== root.copyExitsAtLaunch) return
+      root.pendingCopy = ""
+    }
+  }
+
+  Timer {
+    id: copyZooClock
+    interval: (root.copyTimeoutSec + root.deadlineGraceSec) * 1000
+    repeat: false
+    running: false
+    onTriggered: root.expireCopy()
+  }
+  Timer {
+    id: copyZooKill
+    interval: 2000
+    repeat: false
+    running: false
+    onTriggered: { if (copyZooProc.running) copyZooProc.signal(9) }
   }
 
   Component.onCompleted: { refresh(); loadWallet() }

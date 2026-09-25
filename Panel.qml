@@ -348,6 +348,16 @@ Panel {
             font.pixelSize: Style.font.caption
             elide: Text.ElideRight
           }
+          Text {
+            width: parent.width
+            visible: svc.ingestNotice.length > 0
+            wrapMode: Text.Wrap
+            textFormat: Text.PlainText
+            text: svc.ingestNotice
+            color: Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
           Row {
             spacing: Style.space(14)
             Text {
