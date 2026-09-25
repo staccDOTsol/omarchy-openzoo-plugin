@@ -51,8 +51,14 @@ Item {
   // `proxy` is a user-editable setting. Caps are applied at the PRODUCER,
   // on BOTH streams, before a single byte reaches the collector.
   //
-  // The shell script is fixed. User-configurable values and question text are
-  // positional argv (`$1`..) only. Omarchy's /bin/sh is bash, so `set -o
+  // The shell script is fixed. User-configurable URLs and numeric caps are
+  // positional argv (`$1`..) only. The question and the system prompt are
+  // not: they are written to the Process stdin and closed. `openzoo ask`
+  // (openzoo 0.51.31, bin/openzoo.js) takes the question only as
+  // process.argv[3] and has no stdin, `-`, or `--stdin` form, so calling it
+  // would leave the prompt on cmdline for the whole request. ask-stdin.mjs
+  // reads the JSON payload and calls the same PayClient path in-process.
+  // Omarchy's /bin/sh is bash, so `set -o
   // pipefail` is available and a failing CLI is not hidden by `head` exiting
   // 0. If the shell rejects pipefail, the script exits 2 and does not run the
   // command. The fd split keeps the streams apart:
@@ -96,12 +102,39 @@ Item {
   readonly property string walletScript: pipefailPreamble
     + "{ { openzoo address 2>&1 >&3 3>&- | head -c \"$2\" >/dev/null; } 3>&1 | head -c \"$1\" | grep -oE \"[1-9A-HJ-NP-Za-km-z]{32,44}\" | head -1; }"
 
-  // $1 question, $2 model, $3 system, $4 stdout cap+1, $5 stderr cap+1.
-  // Two fixed scripts so the --web flag is never concatenated in from a setting.
-  readonly property string askScriptWeb: pipefailPreamble
-    + "{ { openzoo ask \"$1\" --model \"$2\" --web --system \"$3\" 2>&1 >&3 3>&- | head -c \"$5\" >&2; } 3>&1 | head -c \"$4\"; }"
-  readonly property string askScriptPlain: pipefailPreamble
-    + "{ { openzoo ask \"$1\" --model \"$2\" --system \"$3\" 2>&1 >&3 3>&- | head -c \"$5\" >&2; } 3>&1 | head -c \"$4\"; }"
+  // $1 helper path, $2 stdout cap+1, $3 stderr cap+1.
+  // Question, model, and system prompt are the JSON document on stdin, never
+  // arguments. One fixed script: web search is a boolean in that document,
+  // not a flag concatenated in from a setting.
+  readonly property string askScript: pipefailPreamble
+    + "{ { node -- \"$1\" 2>&1 >&3 3>&- | head -c \"$3\" >&2; } 3>&1 | head -c \"$2\"; }"
+
+  // Payloads waiting for askProc.onStarted, oldest first. A second ask()
+  // while the first process is still exiting must not overwrite the document
+  // the first process has not read yet.
+  property var askPayloads: []
+
+  function pluginPath(rel) {
+    var url = String(Qt.resolvedUrl(rel))
+    if (url.indexOf("file://") !== 0) return url
+    var path = url.substring(7)
+    if (path.indexOf("localhost/") === 0) path = path.substring("localhost".length)
+    try { path = decodeURIComponent(path) } catch (e) {}
+    return path
+  }
+
+  function enqueueAsk(payload) {
+    var q = root.askPayloads.slice()
+    q.push(payload)
+    root.askPayloads = q
+  }
+
+  function dequeueAsk() {
+    var q = root.askPayloads.slice()
+    var payload = q.length > 0 ? q.shift() : ""
+    root.askPayloads = q
+    return payload
+  }
 
   function boundedCommand(seconds, script, args) {
     var cmd = ["timeout", "-k", "2", String(seconds), "sh", "-c", script, "sh"]
@@ -390,7 +423,8 @@ Item {
     root.answer = ""
     root.askNotice = ""
 
-    // SHELL OUT TO `openzoo ask`, DO NOT POST TO THE PROXY.
+    // SHELL OUT THROUGH THE SAME PAYCLIENT PATH AS `openzoo ask`, DO NOT POST
+    // TO THE PROXY. The prompt is not an argument of that process.
     //
     // The first cut posted to :8402 and gated the box on `proxyUp`, which made
     // the ask box dead whenever the agent was not already running — i.e. almost
@@ -404,10 +438,11 @@ Item {
     // --model is passed explicitly because the CLI's own default is
     // anthropic/claude-opus-5 — the most expensive row in the catalog, and a
     // surprising thing for a bar widget to spend on unasked.
-    // Question, model, and system prompt are argv elements (`$1`..), not
-    // words spliced into the script. `model` is a setting; the system prompt
-    // carries recalled corpus text. Neither is a credential, and the daemon
-    // bearer token is not passed to this command at all.
+    // Question, model, and system prompt go out as one JSON document on
+    // stdin. The system prompt carries recalled corpus text. Neither is a
+    // credential, and the daemon bearer token is not passed to this command
+    // at all. The command line is only `timeout`, `sh`, the fixed script,
+    // the helper path, and the two byte caps.
     //
     // TELL THE MODEL WHERE IT IS. `openzoo ask` bypasses the local proxy, so
     // nothing injects a brief and the model receives the user's words alone.
@@ -422,11 +457,19 @@ Item {
     // (try npm run rebuild?)" at the top of every reply. Stderr is capped by
     // its own head -c and only read when the command failed. A verbose stderr
     // cannot fill the shell, and `timeout` plus the ask clock below cannot
-    // leave `openzoo ask` running after askTimeoutSec.
-    var script = webSearch ? askScriptWeb : askScriptPlain
+    // leave the ask running after askTimeoutSec.
+    root.enqueueAsk(JSON.stringify({
+      question: q,
+      model: model,
+      system: system,
+      web: webSearch === true
+    }))
     askProc.environment = ozEnvironment()
-    askProc.command = boundedCommand(askTimeoutSec, script, [
-      q, model, system, maxAnswerBytes + 1, maxDiagBytes + 1
+    askProc.stdinEnabled = true
+    askProc.command = boundedCommand(askTimeoutSec, askScript, [
+      pluginPath("ask-stdin.mjs"),
+      maxAnswerBytes + 1,
+      maxDiagBytes + 1
     ])
     askProc.running = true
   }
@@ -449,6 +492,7 @@ Item {
   Process {
     id: askProc
     running: false
+    stdinEnabled: false
     command: []
     stdout: StdioCollector { id: askOut; waitForEnd: true }
     stderr: StdioCollector { id: askErr; waitForEnd: true }
@@ -458,6 +502,12 @@ Item {
       askKill.stop()
       askStartWatch.stop()
       askClock.restart()
+      // EOF after the payload. The helper reads stdin to the end and will
+      // not call the model until this closes. Closing also drops the prompt
+      // out of the queue.
+      var payload = root.dequeueAsk()
+      if (payload.length > 0) askProc.write(payload)
+      askProc.stdinEnabled = false
     }
     onExited: function (code) {
       askClock.stop()
@@ -469,6 +519,10 @@ Item {
       // clears Quickshell's queued restart, so start that command here.
       if (root.askLaunch !== root.askStartedLaunch) {
         root.askStop = false
+        // The replacement command was queued with stdin open. onStarted of
+        // the process that just exited closed it; open it again before the
+        // queued command actually starts, or the next payload never goes out.
+        askProc.stdinEnabled = true
         if (!askProc.running) askProc.running = true
         return
       }
@@ -557,6 +611,8 @@ Item {
     onTriggered: {
       if (askProc.running || !root.asking) return
       if (root.askStartedLaunch === root.askLaunch) return
+      // FailedToStart never ran onStarted, so the payload is still queued.
+      root.dequeueAsk()
       root.asking = false
       root.askNotice = "ask failed to start"
     }
