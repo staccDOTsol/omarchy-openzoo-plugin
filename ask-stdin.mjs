@@ -151,11 +151,18 @@ function isDirectRun() {
   }
 }
 
+function fail(err) {
+  const message = err && err.message ? err.message : String(err);
+  process.stderr.write(`openzoo: ${message}\n`);
+  process.exit(1);
+}
+
 if (isDirectRun()) {
-  const raw = readFileSync(0, "utf8");
-  runAsk(readPayload(raw)).catch((err) => {
-    const message = err && err.message ? err.message : String(err);
-    process.stderr.write(`openzoo: ${message}\n`);
-    process.exit(1);
-  });
+  let payload;
+  try {
+    payload = readPayload(readFileSync(0, "utf8"));
+  } catch (err) {
+    fail(err);
+  }
+  runAsk(payload).catch(fail);
 }
