@@ -102,10 +102,22 @@ Item {
   readonly property string healthScript: pipefailPreamble
     + "{ { curl -q -s -m 3 -o /dev/null -w \"%{http_code}\" --url \"$1\" 2>&1 >&3 3>&- | head -c \"$3\" >/dev/null; } 3>&1 | head -c \"$2\"; }"
 
-  // $1 binary, $2 query, $3 top_k, $4 stdout cap+1, $5 stderr cap+1.
-  // No token: this path does not authenticate to the daemon.
+  // $1 helper, $2 ingest binary, $3 top_k, $4 stdout cap+1, $5 stderr cap+1.
+  // The query is the process stdin, not an argument. `openzoo-ingest recall`
+  // joins positional args into the query and has no stdin form, so the helper
+  // loads that program and calls recall() in-process. No token is passed:
+  // the ingester reads its own service token off disk, inside that process.
   readonly property string recallIngestScript: pipefailPreamble
-    + "{ { \"$1\" recall \"$2\" -k \"$3\" 2>&1 >&3 3>&- | head -c \"$5\" >/dev/null; } 3>&1 | head -c \"$4\"; }"
+    + "{ { python3 -u -- \"$1\" \"$2\" \"$3\" 2>&1 >&3 3>&- | head -c \"$5\" >/dev/null; } 3>&1 | head -c \"$4\"; }"
+
+  function pluginPath(rel) {
+    var url = String(Qt.resolvedUrl(rel))
+    if (url.indexOf("file://") !== 0) return url
+    var path = url.substring(7)
+    if (path.indexOf("localhost/") === 0) path = path.substring("localhost".length)
+    try { path = decodeURIComponent(path) } catch (e) {}
+    return path
+  }
 
   // Token, URL, and body ride on stdin (`--config -`), never in this script
   // and never in argv. $1 stdout cap+1, $2 stderr cap+1.
@@ -465,8 +477,10 @@ Item {
 
   // ---- recall --------------------------------------------------------------
   // Holds the curl config, including the bearer line, only until stdin is
-  // written. Cleared as soon as the process has it.
+  // written. Cleared as soon as the process has it. pendingRecallQuery is
+  // the same idea for the ingest fan-out: the query text, not an argv.
   property string pendingRecallConfig: ""
+  property string pendingRecallQuery: ""
   property bool recallSendsAuth: false
   property string pendingCopy: ""
 
@@ -504,10 +518,11 @@ Item {
     if (contextId.trim().length === 0) {
       root.recallSendsAuth = false
       root.pendingRecallConfig = ""
-      recallProc.stdinEnabled = false
+      root.pendingRecallQuery = q
+      recallProc.stdinEnabled = true
       recallProc.command = boundedCommand(recallTimeoutSec, recallIngestScript, [
+        pluginPath("recall-stdin.py"),
         ingestBin,
-        q,
         Math.max(1, Math.min(256, topK)),
         cap,
         errCap
@@ -548,6 +563,7 @@ Item {
   function expireRecall() {
     root.recallStop = true
     root.pendingRecallConfig = ""
+    root.pendingRecallQuery = ""
     if (recallProc.running) {
       recallProc.running = false
       recallKill.restart()
@@ -615,11 +631,16 @@ Item {
       recallKill.stop()
       recallStartWatch.stop()
       recallClock.restart()
-      if (!root.recallSendsAuth) return
-      recallProc.write(root.pendingRecallConfig)
-      root.pendingRecallConfig = ""
-      // EOF. curl reads the config from stdin and will not send until this
-      // closes. Closing also drops the bearer line out of the property.
+      if (root.recallSendsAuth) {
+        recallProc.write(root.pendingRecallConfig)
+        root.pendingRecallConfig = ""
+      } else if (root.pendingRecallQuery.length > 0) {
+        recallProc.write(root.pendingRecallQuery)
+        root.pendingRecallQuery = ""
+      }
+      // EOF. curl and the recall helper both read stdin to the end and will
+      // not send until this closes. Closing also drops the bearer line and
+      // the query out of the properties.
       recallProc.stdinEnabled = false
     }
     onExited: function (code) {
@@ -628,6 +649,7 @@ Item {
       recallStartWatch.stop()
       root.recallExits = root.recallExits + 1
       root.pendingRecallConfig = ""
+      root.pendingRecallQuery = ""
       if (root.queuedQuery.length > 0) {
         var next = root.queuedQuery
         root.queuedQuery = ""
@@ -676,6 +698,7 @@ Item {
       if (recallProc.running || !root.busy) return
       if (root.recallExits !== root.recallExitsAtLaunch) return
       root.pendingRecallConfig = ""
+      root.pendingRecallQuery = ""
       root.results = []
       root.notice = "recall failed to start"
       root.busy = false
