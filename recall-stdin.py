@@ -8,6 +8,7 @@ it would publish the query on cmdline for the whole call. The program's
 and calls `recall()` in-process. Only the binary path and top_k are argv.
 """
 
+import importlib.machinery
 import importlib.util
 import json
 import os
@@ -23,11 +24,15 @@ def load_ingest(bin_path):
         raise RuntimeError(f"openzoo-ingest: cannot read {real}: {exc}") from exc
     if 'if __name__' not in source or "main(sys.argv" not in source:
         raise RuntimeError("openzoo-ingest: recall entry is not import-safe")
-    spec = importlib.util.spec_from_file_location("openzoo_ingest_cli", real)
-    if spec is None or spec.loader is None:
+    # The installed launcher has no .py suffix, so spec_from_file_location
+    # refuses it. SourceFileLoader still compiles it, and __name__ is the
+    # module name, so the CLI's __main__ guard does not run.
+    loader = importlib.machinery.SourceFileLoader("openzoo_ingest_cli", real)
+    spec = importlib.util.spec_from_loader("openzoo_ingest_cli", loader)
+    if spec is None:
         raise RuntimeError("openzoo-ingest: cannot load recall")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    loader.exec_module(module)
     if not hasattr(module, "recall"):
         raise RuntimeError("openzoo-ingest: recall() is missing")
     return module
